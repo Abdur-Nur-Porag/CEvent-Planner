@@ -45,6 +45,8 @@ const DEFAULT_SETTINGS = {
     codeBlockHeight: '800px',
     maxDots: 4,
     enableReminders: true,
+    enableAlarmTone: true,
+    enableAlarmVibration: true,
     recurringLimitMonths: 12,
     timeViewMaxPerSlot: 3,
     timeViewHalfHour: false,
@@ -66,10 +68,63 @@ class ReminderModal extends Modal {
         this.plugin = plugin;
     }
 
+    /* ---- Alarm audio engine (Web Audio API) ---- */
+    _startAlarm() {
+        try {
+            this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            this._alarmActive = true;
+            const playBeep = () => {
+                if (!this._alarmActive || !this._audioCtx) return;
+                const ctx = this._audioCtx;
+                // Two-tone alarm: high then low
+                const tones = [880, 660];
+                tones.forEach((freq, i) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.18);
+                    gain.gain.setValueAtTime(0.35, ctx.currentTime + i * 0.18);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.18 + 0.16);
+                    osc.start(ctx.currentTime + i * 0.18);
+                    osc.stop(ctx.currentTime + i * 0.18 + 0.16);
+                });
+                this._alarmTimeout = setTimeout(playBeep, 1200);
+            };
+            playBeep();
+        } catch(e) { /* AudioContext not available */ }
+    }
+
+    _startVibration() {
+        if (!navigator.vibrate) return;
+        this._vibActive = true;
+        const pulse = () => {
+            if (!this._vibActive) return;
+            // Strong pattern: long-short-long
+            navigator.vibrate([400, 150, 400, 150, 400]);
+            this._vibInterval = setTimeout(pulse, 1300);
+        };
+        pulse();
+    }
+
+    _stopAlarm() {
+        this._alarmActive = false;
+        this._vibActive = false;
+        if (this._alarmTimeout) { clearTimeout(this._alarmTimeout); this._alarmTimeout = null; }
+        if (this._vibInterval) { clearTimeout(this._vibInterval); this._vibInterval = null; }
+        if (this._audioCtx) { try { this._audioCtx.close(); } catch(e){} this._audioCtx = null; }
+        if (navigator.vibrate) navigator.vibrate(0);
+    }
+
     onOpen() {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass('cevent-reminder-modal');
+
+        // Start alarm + vibration based on settings
+        if (this.plugin.settings.enableAlarmTone !== false) this._startAlarm();
+        if (this.plugin.settings.enableAlarmVibration !== false) this._startVibration();
 
         const header = contentEl.createEl('h2', { text: '⏰ Event Alarm' });
         header.style.color = 'var(--interactive-accent)';
@@ -166,6 +221,7 @@ class ReminderModal extends Modal {
     }
 
     onClose() {
+        this._stopAlarm();
         const { contentEl } = this;
         contentEl.empty();
     }
@@ -456,9 +512,9 @@ class CEventApp {
         dateText.setText(displayDate);
 
         const headerRight = topbar.createDiv('cevent-list-header-right');
-        const calBtn = headerRight.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Go to calendar' });
+        const calBtn = headerRight.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Go to today' });
         calBtn.innerHTML = SVG.calendar;
-        calBtn.onclick = () => { this.currentView = 'calendar'; this.render(); };
+        calBtn.onclick = () => { this.selectedDateObj = moment(); this.render(); };
 
         const maxDots = parseInt(this.plugin.settings.maxDots) || 4;
         const scroller = topSection.createDiv('cevent-horizontal-scroller');
@@ -659,8 +715,12 @@ class CEventApp {
         const nowMinute = moment().minute();
         const nowAmpm = moment().format('A');
 
-        const table = wrapper.createDiv('cevent-tv-table');
-        const headerRow = table.createDiv('cevent-tv-header-row');
+        const table = wrapper.createDiv('cevent-tv-scroll-wrapper');
+        const innerTable = table.createDiv('cevent-tv-table');
+        // alias so existing code below uses innerTable as "table"
+        const tableAlias = innerTable;
+
+        const headerRow = tableAlias.createDiv('cevent-tv-header-row');
         headerRow.createDiv({ text: 'Time', cls: 'cevent-tv-col-time cevent-tv-col-head' });
         const amHeadEl = headerRow.createDiv({ text: 'AM', cls: 'cevent-tv-col-am cevent-tv-col-head' });
         if (nowAmpm === 'AM') amHeadEl.addClass('highlight');
@@ -668,7 +728,7 @@ class CEventApp {
         if (nowAmpm === 'PM') pmHeadEl.addClass('highlight');
 
         if (allDayEvents.length > 0) {
-            const row = table.createDiv('cevent-tv-row');
+            const row = tableAlias.createDiv('cevent-tv-row');
             row.createDiv({ text: 'All Day', cls: 'cevent-tv-col-time cevent-tv-label highlight' });
             const amCol = row.createDiv('cevent-tv-col-am');
             const pmCol = row.createDiv('cevent-tv-col-pm');
@@ -696,7 +756,7 @@ class CEventApp {
                 const isCurrentPmSlot = (nowAmpm === 'PM' && nowHour === pmHour && (!isHalfHour || (is30Min ? nowMinute >= 30 : nowMinute < 30)));
                 const isCurrentRow = isCurrentAmSlot || isCurrentPmSlot;
 
-                const row = table.createDiv(`cevent-tv-row${isCurrentRow ? ' current-hour' : ''}`);
+                const row = tableAlias.createDiv(`cevent-tv-row${isCurrentRow ? ' current-hour' : ''}`);
                 row.createDiv({ text: timeLabelText, cls: `cevent-tv-col-time cevent-tv-label${isCurrentRow ? ' highlight' : ''}` });
 
                 // AM Col
@@ -728,7 +788,7 @@ class CEventApp {
 
         // Precision auto-scroll targeting the exact current time slot
         setTimeout(() => {
-            const currentTarget = wrapper.querySelector('.current-slot') || wrapper.querySelector('.current-hour');
+            const currentTarget = table.querySelector('.current-slot') || table.querySelector('.current-hour');
             if (currentTarget) currentTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 100);
     }
@@ -793,15 +853,47 @@ class CEventApp {
         const controls = header.createDiv('cevent-flex-row cevent-calendar-controls');
         const calBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Go to today' });
         calBtn.innerHTML = SVG.calendar;
-        calBtn.onclick = () => { this.currentMonthObj = moment(); this.currentView = 'calendar'; this.render(); };
+        calBtn.onclick = () => {
+            this.currentMonthObj = moment();
+            this.selectedDateObj = moment();
+            this.renderAllTasksList(listContainer);
+            setTimeout(() => {
+                const todayTarget = listContainer.querySelector('.cevent-today-target');
+                if (todayTarget) todayTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 80);
+        };
 
-        const prevBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Previous month' });
+        const prevBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Previous day' });
         prevBtn.innerHTML = SVG.chevronLeft;
-        prevBtn.onclick = () => { this.currentMonthObj.subtract(1, 'month'); this.render(); };
+        prevBtn.onclick = () => {
+            this.selectedDateObj = (this.selectedDateObj || moment()).clone().subtract(1, 'day');
+            this.currentMonthObj = this.selectedDateObj.clone();
+            dayMonthLabel.setText(this.currentMonthObj.format('D MMMM'));
+            yearLabel.setText(this.currentMonthObj.format('YYYY'));
+            this.renderAllTasksList(listContainer);
+            setTimeout(() => {
+                const targetDateStr = this.selectedDateObj.format('DD-MM-YYYY');
+                let found = listContainer.querySelector(`[data-date="${targetDateStr}"]`);
+                if (found) found.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                else listContainer.scrollTop = 0;
+            }, 80);
+        };
 
-        const nextBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Next month' });
+        const nextBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Next day' });
         nextBtn.innerHTML = SVG.chevronRight;
-        nextBtn.onclick = () => { this.currentMonthObj.add(1, 'month'); this.render(); };
+        nextBtn.onclick = () => {
+            this.selectedDateObj = (this.selectedDateObj || moment()).clone().add(1, 'day');
+            this.currentMonthObj = this.selectedDateObj.clone();
+            dayMonthLabel.setText(this.currentMonthObj.format('D MMMM'));
+            yearLabel.setText(this.currentMonthObj.format('YYYY'));
+            this.renderAllTasksList(listContainer);
+            setTimeout(() => {
+                const targetDateStr = this.selectedDateObj.format('DD-MM-YYYY');
+                let found = listContainer.querySelector(`[data-date="${targetDateStr}"]`);
+                if (found) found.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                else listContainer.scrollTop = listContainer.scrollHeight;
+            }, 80);
+        };
 
         const tools = topSection.createDiv('cevent-tools-area');
         const searchWrapper = tools.createDiv('cevent-search-wrapper');
@@ -867,6 +959,7 @@ class CEventApp {
             const isToday = m.isValid() && m.isSame(today, 'day');
 
             const dateHeader = wrapperList.createDiv('cevent-date-segment-header');
+            dateHeader.dataset.date = dateStr;
             if (isToday) dateHeader.addClass('cevent-today-target');
             const dateBadge = dateHeader.createDiv('cevent-date-badge');
             if (isToday) dateBadge.addClass('is-today');
@@ -1269,6 +1362,26 @@ class CEventPlannerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                     if (value) this.plugin.startReminderService();
                     else this.plugin.stopReminderService();
+                }));
+
+        new Setting(containerEl)
+            .setName('Alarm Tone')
+            .setDesc('Play an audible alarm tone when an event alarm fires (continues until modal is closed).')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableAlarmTone !== false)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableAlarmTone = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Alarm Vibration')
+            .setDesc('Vibrate the device when an alarm fires (mobile/supported devices; continues until modal is closed).')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enableAlarmVibration !== false)
+                .onChange(async (value) => {
+                    this.plugin.settings.enableAlarmVibration = value;
+                    await this.plugin.saveSettings();
                 }));
     }
 }
@@ -1882,8 +1995,16 @@ class CEventPlannerPlugin extends Plugin {
             .cevent-event-icon-custom:active { cursor: grabbing; }
 
             /* ===================== TIME VIEW TABLE ===================== */
+            .cevent-tv-scroll-wrapper {
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                border-radius: 14px;
+            }
+            .cevent-tv-scroll-wrapper::-webkit-scrollbar { height: 4px; }
+            .cevent-tv-scroll-wrapper::-webkit-scrollbar-thumb { background: var(--background-modifier-border); border-radius: 10px; }
             .cevent-tv-table {
-                display: flex; flex-direction: column; width: 100%;
+                display: flex; flex-direction: column; min-width: 340px; width: 100%;
                 border: 2px solid color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
                 border-radius: 14px; overflow: hidden;
                 background: var(--background-primary);
