@@ -4,7 +4,8 @@
 > A powerful, in-note event planner and calendar dashboard for Obsidian. Write events in plain Markdown, visualize them in a beautiful calendar, and never miss a deadline with built-in alarms.
 
 ---
-
+⚠️ Important Install [CEvent Planner Extra](obsidian://show-plugin?id=cevent-planner-extra) 
+plugin also to `Create Event Visually`.
 ## Table of Contents
 
 - [What Is CEvent Planner?](#what-is-cevent-planner)
