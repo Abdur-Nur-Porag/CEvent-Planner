@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS = {
     recurringLimitMonths: 12,
     timeViewMaxPerSlot: 3,
     timeViewHalfHour: false,
+    timeViewGridMode: 'event hour',
     statusColors: {
         pending: '#006D77',
         completed: '#588157',
@@ -635,6 +636,7 @@ class CEventApp {
         const events = this.filterAndSortEvents(this.currentBaseEvents);
 
         const isHalfHour = this.plugin.settings.timeViewHalfHour;
+        const gridMode = this.plugin.settings.timeViewGridMode || 'event hour';
         const slotsCount = isHalfHour ? 48 : 24;
         const hourlyMap = {};
         for (let i = 0; i < slotsCount; i++) hourlyMap[i] = [];
@@ -717,7 +719,6 @@ class CEventApp {
 
         const table = wrapper.createDiv('cevent-tv-scroll-wrapper');
         const innerTable = table.createDiv('cevent-tv-table');
-        // alias so existing code below uses innerTable as "table"
         const tableAlias = innerTable;
 
         const headerRow = tableAlias.createDiv('cevent-tv-header-row');
@@ -755,6 +756,12 @@ class CEventApp {
                 const isCurrentAmSlot = (nowAmpm === 'AM' && nowHour === amHour && (!isHalfHour || (is30Min ? nowMinute >= 30 : nowMinute < 30)));
                 const isCurrentPmSlot = (nowAmpm === 'PM' && nowHour === pmHour && (!isHalfHour || (is30Min ? nowMinute >= 30 : nowMinute < 30)));
                 const isCurrentRow = isCurrentAmSlot || isCurrentPmSlot;
+                const hasEvents = amEvents.length > 0 || pmEvents.length > 0;
+
+                // Feature Update: Hide rows with no events if grid mode is 'event hour'
+                if (gridMode === 'event hour' && !isCurrentRow && !hasEvents) {
+                    return; 
+                }
 
                 const row = tableAlias.createDiv(`cevent-tv-row${isCurrentRow ? ' current-hour' : ''}`);
                 row.createDiv({ text: timeLabelText, cls: `cevent-tv-col-time cevent-tv-label${isCurrentRow ? ' highlight' : ''}` });
@@ -782,8 +789,8 @@ class CEventApp {
             if (isHalfHour) renderTableRow(true);
         }
 
-        if (events.length === 0 && allDayEvents.length === 0) {
-            wrapper.createDiv({ text: 'No events for this date.', cls: 'cevent-empty-state' });
+        if (events.length === 0 && allDayEvents.length === 0 && gridMode === 'event hour') {
+            wrapper.createDiv({ text: 'No scheduled events today.', cls: 'cevent-empty-state' });
         }
 
         // Precision auto-scroll targeting the exact current time slot
@@ -812,9 +819,26 @@ class CEventApp {
             this.render();
         };
 
-        const iconEl = cell.createDiv('cevent-tv-cell-icon');
-        iconEl.style.background = targetColor;
+        // 1. Icon (if has)
+        if (ev.icon) {
+            const iconSpan = cell.createSpan('cevent-prefix-icon');
+            iconSpan.innerHTML = ev.icon.startsWith('<svg') ? ev.icon : `<span>${ev.icon}</span>`;
+            iconSpan.style.color = targetColor;
+            if (ev.icon.startsWith('<svg')) iconSpan.style.fill = targetColor;
+        } else {
+            // Default color dot if no custom icon
+            const iconEl = cell.createDiv('cevent-tv-cell-icon');
+            iconEl.style.background = targetColor;
+        }
 
+        // 2. Alarm Icon (if has)
+        if (ev.alarm) {
+            const alarmSpan = cell.createSpan('cevent-alarm-icon');
+            alarmSpan.innerHTML = SVG.alarm;
+            alarmSpan.style.color = 'var(--text-muted)';
+        }
+
+        // 3. Event Title (truncated)
         const labelEl = cell.createDiv('cevent-tv-cell-label');
         labelEl.setText(ev.name);
     }
@@ -1311,6 +1335,18 @@ class CEventPlannerSettingTab extends PluginSettingTab {
                 .addOption('allTasks', 'All Tasks')
                 .setValue(this.plugin.settings.defaultView)
                 .onChange(async (value) => { this.plugin.settings.defaultView = value; await this.plugin.saveSettings(); }));
+
+        new Setting(containerEl)
+            .setName('Time View Hour Grid')
+            .setDesc('Choose whether the time view displays all 24 hours or only hours that contain events.')
+            .addDropdown(dropdown => dropdown
+                .addOption('24 hour', '24 Hour Grid')
+                .addOption('event hour', 'Only Event Hours')
+                .setValue(this.plugin.settings.timeViewGridMode || 'event hour')
+                .onChange(async (value) => {
+                    this.plugin.settings.timeViewGridMode = value;
+                    await this.plugin.saveSettings();
+                }));
 
         new Setting(containerEl)
             .setName('Block Height')
@@ -2009,22 +2045,26 @@ class CEventPlannerPlugin extends Plugin {
                 border-radius: 14px; overflow: hidden;
                 background: var(--background-primary);
             }
+            
+            /* FIXED WIDTH UPDATE FOR GRID COLUMNS */
             .cevent-tv-header-row {
-                display: grid; grid-template-columns: 70px 1fr 1fr;
+                display: grid; grid-template-columns: 85px minmax(0, 1fr) minmax(0, 1fr);
                 background: var(--background-secondary);
                 border-bottom: 2px solid color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
             }
+            .cevent-tv-row {
+                display: grid; grid-template-columns: 85px minmax(0, 1fr) minmax(0, 1fr);
+                border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border));
+                min-height: 40px;
+            }
+            
             .cevent-tv-col-head {
                 padding: 10px 8px; font-size: 0.85em; font-weight: 700;
                 color: var(--text-muted); text-transform: uppercase;
                 text-align: center; letter-spacing: 0.5px;
             }
             .cevent-tv-col-head.highlight { color: var(--interactive-accent); }
-            .cevent-tv-row {
-                display: grid; grid-template-columns: 70px 1fr 1fr;
-                border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border));
-                min-height: 40px;
-            }
+            
             .cevent-tv-row:last-child { border-bottom: none; }
             .cevent-tv-row.current-hour { background: rgba(var(--interactive-accent-rgb), 0.04); }
 
@@ -2060,7 +2100,9 @@ class CEventPlannerPlugin extends Plugin {
                 background: color-mix(in srgb, var(--event-border-color, var(--background-modifier-border)) 12%, var(--background-secondary));
                 border-left: 3px solid var(--event-border-color, var(--background-modifier-border));
                 transition: all 0.15s;
+                min-width: 0; /* Ensures inner flex flex text truncates cleanly */
             }
+            
             /* BRIGHT HIGHLIGHT FOR SPANNING EVENTS */
             .cevent-tv-cell-span {
                 background: color-mix(in srgb, var(--event-border-color) 25%, var(--background-secondary));
@@ -2071,13 +2113,29 @@ class CEventPlannerPlugin extends Plugin {
             }
 
             .cevent-tv-cell:hover { filter: brightness(1.05); transform: translateX(2px); }
+            
+            .cevent-prefix-icon {
+                display: inline-flex; align-items: center; justify-content: center;
+                flex-shrink: 0; width: 14px; height: 14px; font-size: 12px;
+            }
+            .cevent-prefix-icon svg { width: 100%; height: 100%; }
+            
+            .cevent-alarm-icon {
+                display: inline-flex; align-items: center; justify-content: center;
+                flex-shrink: 0; width: 12px; height: 12px;
+            }
+            .cevent-alarm-icon svg { width: 100%; height: 100%; }
+            
             .cevent-tv-cell-icon {
                 width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
             }
+            
             .cevent-tv-cell-label {
                 font-size: 0.75em; font-weight: 600; color: var(--text-normal);
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+                flex: 1; min-width: 0;
             }
+            
             .cevent-tv-more {
                 font-size: 0.7em; color: var(--interactive-accent); cursor: pointer;
                 padding: 2px 4px; font-weight: 600;
@@ -2191,6 +2249,48 @@ class CEventPlannerPlugin extends Plugin {
                 cursor: pointer; transform: scale(1.1); margin-right: 8px;
                 accent-color: var(--interactive-accent);
             }
+/* Ensure the table's container has a defined height and scrolling enabled */
+
+/* Ensure the table's container handles the scrolling context */
+.timeview-container {
+    max-height: 450px; /* Adjust based on your preferred view height */
+    overflow-y: auto;
+    position: relative;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+}
+
+/* Ensure the table borders don't glitch during sticky scroll */
+.timeview-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    width: 100%;
+}
+
+/* Make the table headers sticky and float when scrolling */
+.timeview-table thead th {
+    position: sticky;
+    top: 0;
+    /* Uses Obsidian variables to support both light and dark mode themes */
+    background-color: var(--background-primary); 
+    z-index: 5; 
+    /* Simulates the bottom border so it stays visible while floating */
+    box-shadow: inset 0 -1px 0 var(--background-modifier-border); 
+}
+
+/* Optional: Subtle shadow underneath the header when it floats */
+.timeview-table thead th::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -5px;
+    height: 5px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.05), rgba(0,0,0,0));
+    pointer-events: none;
+}
+
+
         `;
         document.head.appendChild(style);
     }

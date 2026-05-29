@@ -1,7 +1,7 @@
 {
   "id": "cevent-planner",
   "name": "CEvent-Planner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "0.15.0",
   "description": "An interactive event and task manager dashboard featuring modern Calendar, List, and Timeline views with live subtask tracking and system reminders.",
   "author": "Abdur-Nur-Porag",
