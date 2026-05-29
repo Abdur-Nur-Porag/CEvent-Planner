@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
   "description": "An interactive event and task manager dashboard featuring modern Calendar, List, and Timeline views with live subtask tracking and system reminders.",
-  "author": "PixelFly",
-  "authorUrl": "https://github.com/PixelFly",
+  "author": "Abdur-Nur-Porag",
+  "authorUrl": "https://github.com/Abdur-Nur-Porag",
   "isDesktopOnly": false
 }
