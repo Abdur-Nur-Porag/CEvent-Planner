@@ -14,6 +14,69 @@ function parseTimeObj(tStr) {
 }
 
 /* =========================================================================
+   HELPER: TIME FORMAT (12 / 24 HOUR) — DEVICE-AWARE
+   ========================================================================= */
+// Detects whether the user's OS/device locale prefers a 12-hour clock (AM/PM)
+// or a 24-hour clock, so "Auto" mode in settings can mirror real device format.
+function deviceUses12Hour() {
+    try {
+        return !!new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12;
+    } catch (e) {
+        return true;
+    }
+}
+
+// formatPref: 'auto' | '12' | '24'
+function use12HourFormat(formatPref) {
+    if (formatPref === '12') return true;
+    if (formatPref === '24') return false;
+    return deviceUses12Hour();
+}
+
+// Renders an hour/minute pair as a real-world clock label, respecting settings.
+function formatClockLabel(hour, minute, formatPref) {
+    const m = moment().hour(hour).minute(minute).second(0);
+    return use12HourFormat(formatPref) ? m.format(minute ? 'h:mm A' : 'h A') : m.format('HH:mm');
+}
+
+// Converts a "HH:mm" 24-hour string (from an <input type="time">) into minutes since midnight.
+function hhmmToMinutes(tStr) {
+    if (!tStr) return null;
+    const parts = String(tStr).split(':');
+    if (parts.length < 2) return null;
+    const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+    if (isNaN(h) || isNaN(m)) return null;
+    return h * 60 + m;
+}
+
+function minutesToHHMM(mins) {
+    const total = ((mins % 1440) + 1440) % 1440;
+    const h = Math.floor(total / 60), m = total % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// Default time-of-day groups covering the full 24 hours.
+const DEFAULT_TIME_GROUPS = [
+    { id: 'midnight',  name: 'Midnight',  start: '00:00', end: '03:00' },
+    { id: 'dawn',      name: 'Dawn',      start: '03:00', end: '06:00' },
+    { id: 'morning',   name: 'Morning',   start: '06:00', end: '12:00' },
+    { id: 'noon',      name: 'Noon',      start: '12:00', end: '13:00' },
+    { id: 'afternoon', name: 'Afternoon', start: '13:00', end: '17:00' },
+    { id: 'evening',   name: 'Evening',   start: '17:00', end: '20:00' },
+    { id: 'night',     name: 'Night',     start: '20:00', end: '24:00' },
+];
+
+// Picks an icon key from SVG based on the group's name (best-effort heuristic).
+function iconForTimeGroupName(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('dawn') || n.includes('morning') || n.includes('sunrise')) return 'sunrise';
+    if (n.includes('noon') || n.includes('afternoon') || n.includes('day')) return 'sun';
+    if (n.includes('evening') || n.includes('dusk') || n.includes('sunset')) return 'sunset';
+    if (n.includes('night') || n.includes('midnight')) return 'moon';
+    return 'clock';
+}
+
+/* =========================================================================
    SVG ICON LIBRARY (no emoji - pure SVG)
    ========================================================================= */
 const SVG = {
@@ -34,6 +97,13 @@ const SVG = {
     file: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
     timeview: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
     listview: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
+    weekview: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="18"/><line x1="12" y1="14" x2="12" y2="18"/><line x1="16" y1="14" x2="16" y2="18"/></svg>`,
+    snooze: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M5 3L2 6"/><path d="M22 6l-3-3"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="15" y1="13" x2="12" y2="13"/><path d="M9 17h6l-6 4h6"/></svg>`,
+    sunrise: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="2" x2="12" y2="9"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="8 6 12 2 16 6"/></svg>`,
+    sun: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`,
+    sunset: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 18a5 5 0 0 0-10 0"/><line x1="12" y1="9" x2="12" y2="2"/><line x1="4.22" y1="10.22" x2="5.64" y2="11.64"/><line x1="1" y1="18" x2="3" y2="18"/><line x1="21" y1="18" x2="23" y2="18"/><line x1="18.36" y1="11.64" x2="19.78" y2="10.22"/><line x1="23" y1="22" x2="1" y2="22"/><polyline points="16 5 12 9 8 5"/></svg>`,
+    moon: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
+    conflict: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
 };
 
 /* =========================================================================
@@ -51,6 +121,17 @@ const DEFAULT_SETTINGS = {
     timeViewMaxPerSlot: 3,
     timeViewHalfHour: false,
     timeViewGridMode: 'event hour',
+    calendarDayShape: 'circle',
+    snoozeMinutes: 10,
+    timeFormat: 'auto', // 'auto' | '12' | '24' — 'auto' mirrors the user's device format
+    timeGroups: DEFAULT_TIME_GROUPS.map(g => ({ ...g })),
+    cardBorderRadius: 0, // event card corner radius in px — 0 = square (elevation used instead)
+    accordionOpenCount: '1', // 'all' or a positive integer — how many month accordions open by default in All Tasks
+    statusLabels: {
+        pending: 'Pending',
+        completed: 'Completed',
+        closed: 'Closed'
+    },
     statusColors: {
         pending: '#006D77',
         completed: '#588157',
@@ -216,6 +297,48 @@ class ReminderModal extends Modal {
             await leaf.openFile(this.event.file);
         };
 
+        const snoozeLabel = contentEl.createDiv();
+        snoozeLabel.style.textAlign = 'center';
+        snoozeLabel.style.marginTop = '14px';
+        snoozeLabel.style.marginBottom = '6px';
+        snoozeLabel.style.fontSize = '0.8em';
+        snoozeLabel.style.color = 'var(--text-muted)';
+        snoozeLabel.style.fontWeight = '600';
+        snoozeLabel.style.textTransform = 'uppercase';
+        snoozeLabel.style.letterSpacing = '0.5px';
+        snoozeLabel.setText('Snooze');
+
+        const snoozeRow = contentEl.createDiv();
+        snoozeRow.style.display = 'flex';
+        snoozeRow.style.justifyContent = 'center';
+        snoozeRow.style.gap = '8px';
+        snoozeRow.style.flexWrap = 'wrap';
+
+        const snoozeMinutes = this.plugin.settings.snoozeMinutes || 10;
+        [5, snoozeMinutes, 30].filter((v,i,a)=>a.indexOf(v)===i).forEach(mins => {
+            const snoozeBtn = snoozeRow.createEl('button', { text: `${mins} min` });
+            snoozeBtn.style.borderRadius = '28px';
+            snoozeBtn.style.padding = '6px 14px';
+            snoozeBtn.style.background = 'var(--background-secondary)';
+            snoozeBtn.style.border = '1px solid var(--background-modifier-border)';
+            snoozeBtn.style.cursor = 'pointer';
+            snoozeBtn.style.fontSize = '0.85em';
+            snoozeBtn.style.fontWeight = '600';
+            snoozeBtn.onclick = () => {
+                this._stopAlarm();
+                const snoozeTime = moment().add(mins, 'minutes');
+                const snoozeAlarm = snoozeTime.format('hh:mm A');
+                new Notice(`⏰ Snoozed "${this.event.name}" for ${mins} min (until ${snoozeAlarm})`);
+                // Re-schedule: temporarily override notified so it fires again
+                const uniqueId = `snooze-${this.event.id}-${snoozeTime.valueOf()}`;
+                setTimeout(() => {
+                    new ReminderModal(this.plugin.app, this.event, this.plugin).open();
+                    new Notice(`⏰ Snooze ended: ${this.event.name}`, 8000);
+                }, mins * 60 * 1000);
+                this.close();
+            };
+        });
+
         const dismissBtn = btnContainer.createEl('button', { text: '✕ Dismiss' });
         dismissBtn.style.borderRadius = '28px';
         dismissBtn.onclick = () => this.close();
@@ -250,7 +373,19 @@ class CEventApp {
         this.timeScope = 'Selected Date';
         this.sortMode = this.plugin.settings.defaultSort;
 
+        // Tracks which specific stats-bar chip (e.g. 'week-pending', 'month-completed')
+        // was last clicked, so the chip highlight is independent of the main status
+        // dropdown — selecting "Pending" from the dropdown should NOT auto-light-up
+        // the "Pending this week/month" chips, since those are a different control.
+        this.activeStatChip = null;
+
         this.currentBaseEvents = [];
+        this.weekViewBaseDate = moment().startOf('week');
+        // Tracks which month-accordions are expanded in the All Tasks view. Starts
+        // uninitialized so the first render can auto-open the current/nearest month
+        // (per settings.accordionOpenCount) instead of opening every month.
+        this.expandedMonths = new Set();
+        this.monthAccordionInitialized = false;
     }
 
     mount() {
@@ -262,6 +397,9 @@ class CEventApp {
 
     render() {
         this.rootEl.empty();
+        // Keep the card radius CSS var in sync with settings (covers live setting changes).
+        const radius = parseInt(this.plugin.settings.cardBorderRadius, 10);
+        this.rootEl.style.setProperty('--cevent-card-radius', `${isNaN(radius) ? 0 : radius}px`);
 
         if (this.currentView === 'event') {
             const wrapper = this.rootEl.createDiv('cevent-dashboard-wrapper');
@@ -279,6 +417,7 @@ class CEventApp {
 
         const tabs = [
             { id: 'calendar', svgKey: 'calendar', label: 'Calendar' },
+            { id: 'week',     svgKey: 'weekview',  label: 'Week' },
             { id: 'list',     svgKey: 'list',     label: 'Schedule' },
             { id: 'allTasks', svgKey: 'tasks',    label: 'All Tasks' },
         ];
@@ -299,6 +438,7 @@ class CEventApp {
         const wrapper = contentArea.createDiv('cevent-dashboard-wrapper');
         switch (this.currentView) {
             case 'calendar': this.renderCalendar(wrapper); break;
+            case 'week':     this.renderWeekView(wrapper); break;
             case 'list':     this.renderListViewWrapper(wrapper); break;
             case 'allTasks': this.renderAllTasksView(wrapper); break;
             default: this.renderListViewWrapper(wrapper);
@@ -309,6 +449,10 @@ class CEventApp {
        VIEW 1: CALENDAR
        ========================================================================= */
     renderCalendar(container) {
+        // Apply day shape class based on settings
+        const shape = this.plugin.settings.calendarDayShape || 'circle';
+        this.rootEl.setAttribute('data-day-shape', shape);
+
         const topSection = container.createDiv('cevent-fixed-header');
         const header = topSection.createDiv('cevent-calendar-header cevent-flex-between');
 
@@ -422,9 +566,31 @@ class CEventApp {
                         if (ev.isMultiDay) indicator.addClass('is-multi-day');
                     }
 
+                    // Mini tooltip on hover
+                    const tipText = ev.time ? `${ev.name}\n⏰ ${ev.time}` : ev.name;
+                    indicator.setAttribute('aria-label', tipText);
+                    indicator.addEventListener('mouseenter', (e) => {
+                        let tip = document.querySelector('.cevent-dot-tooltip');
+                        if (!tip) { tip = document.createElement('div'); tip.className = 'cevent-dot-tooltip'; document.body.appendChild(tip); }
+                        tip.innerHTML = `<strong>${ev.name}</strong>${ev.time ? '<br><span>' + ev.time + '</span>' : ''}${ev.status !== 'pending' ? '<br><em>' + ev.status + '</em>' : ''}`;
+                        tip.style.display = 'block';
+                        const r = e.target.getBoundingClientRect();
+                        tip.style.left = (r.left + window.scrollX) + 'px';
+                        tip.style.top = (r.top + window.scrollY - tip.offsetHeight - 8) + 'px';
+                        // Reposition if off-screen
+                        requestAnimationFrame(() => {
+                            tip.style.left = Math.min(r.left + window.scrollX, window.innerWidth - tip.offsetWidth - 8) + 'px';
+                            tip.style.top = (r.top + window.scrollY - tip.offsetHeight - 8) + 'px';
+                        });
+                    });
+                    indicator.addEventListener('mouseleave', () => {
+                        const tip = document.querySelector('.cevent-dot-tooltip');
+                        if (tip) tip.style.display = 'none';
+                    });
+
                     if (!ev.isProjectedRecurring) {
                         indicator.draggable = true;
-                        indicator.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', ev.id); indicator.style.opacity = '0.5'; });
+                        indicator.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', ev.id); indicator.style.opacity = '0.5'; const tip = document.querySelector('.cevent-dot-tooltip'); if(tip) tip.style.display='none'; });
                         indicator.addEventListener('dragend', () => { indicator.style.opacity = '1'; });
                     } else {
                         indicator.title = 'Recurring (cannot drag)';
@@ -462,13 +628,30 @@ class CEventApp {
     /* =========================================================================
        VIEW 2: LIST VIEW & TIME VIEW
        ========================================================================= */
+    // Status filters (Pending/Completed/Closed) narrow down the events within
+    // whatever date/week is currently focused — they no longer reach across to
+    // other dates. Tab 3 should always show events for the focused/selected
+    // date (or the chosen date-scope), full stop.
+    isStatusFilterActive() {
+        return this.listFilter === 'pending' || this.listFilter === 'completed' || this.listFilter === 'closed';
+    }
+
     getBaseEvents() {
         if (this.timeScope === 'Upcoming') {
             return this.plugin.eventsArray.filter(e => {
                 const eventDate = moment(e.originalStartDate, 'DD-MM-YYYY');
                 return eventDate.isValid() && eventDate.isAfter(moment(), 'day');
             });
-        } 
+        }
+
+        if (this.timeScope === 'This Week') {
+            const weekStart = this.selectedDateObj.clone().startOf('week');
+            const weekEnd = this.selectedDateObj.clone().endOf('week');
+            return this.plugin.eventsArray.filter(e => {
+                const eventDate = moment(e.originalStartDate, 'DD-MM-YYYY');
+                return eventDate.isValid() && eventDate.isSameOrAfter(weekStart, 'day') && eventDate.isSameOrBefore(weekEnd, 'day');
+            });
+        }
         
         let targetDate = this.selectedDateObj;
         if (this.timeScope === 'Next Day') targetDate = moment().add(1, 'days');
@@ -515,11 +698,19 @@ class CEventApp {
         const headerRight = topbar.createDiv('cevent-list-header-right');
         const calBtn = headerRight.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Go to today' });
         calBtn.innerHTML = SVG.calendar;
-        calBtn.onclick = () => { this.selectedDateObj = moment(); this.render(); };
+        calBtn.onclick = () => {
+            this.selectedDateObj = moment();
+            this.render();
+            // Re-focus the active day in the horizontal date strip after the rebuild.
+            setTimeout(() => {
+                const activeDay = this.rootEl.querySelector('.cevent-scroll-day.active');
+                if (activeDay) activeDay.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            }, 80);
+        };
 
         const maxDots = parseInt(this.plugin.settings.maxDots) || 4;
         const scroller = topSection.createDiv('cevent-horizontal-scroller');
-        for (let i = -3; i <= 3; i++) {
+        for (let i = -7; i <= 7; i++) {
             const scrollDayObj = this.selectedDateObj.clone().add(i, 'days');
             const dayCol = scroller.createDiv('cevent-scroll-day');
             if (i === 0) dayCol.addClass('active');
@@ -566,7 +757,7 @@ class CEventApp {
 
         const controlsRow = tools.createDiv('cevent-controls-row');
         const scopeSelect = controlsRow.createEl('select', { cls: 'cevent-filter-select' });
-        ['Selected Date', 'Previous Day', 'Next Day', 'Upcoming'].forEach(opt => {
+        ['Selected Date', 'Previous Day', 'Next Day', 'This Week', 'Upcoming'].forEach(opt => {
             const o = scopeSelect.createEl('option', { value: opt, text: opt });
             if (this.timeScope === opt) o.selected = true;
         });
@@ -596,7 +787,20 @@ class CEventApp {
             });
         }
         tagSelect.value = this.listFilter;
-        tagSelect.onchange = (e) => { this.listFilter = e.target.value; this.routeListRendering(listContainer); };
+        tagSelect.onchange = (e) => {
+            this.listFilter = e.target.value;
+            this.activeStatChip = null;
+            // TimeView is an hour-by-hour grid for a single day, so it can't usefully
+            // show a status filter spanning a multi-day scope (This Week/Upcoming) —
+            // fall back to ListView in that case.
+            if (this.isStatusFilterActive() && this.listSubView === 'time') {
+                this.listSubView = 'list';
+            }
+            // Status filters change which events are even in scope (see getBaseEvents),
+            // so the base event set must be recomputed here too — not just re-filtered.
+            this.currentBaseEvents = this.getBaseEvents();
+            this.render();
+        };
 
         const toggleRow = tools.createDiv('cevent-toggle-row');
         const viewToggle = toggleRow.createDiv('cevent-view-toggle');
@@ -625,6 +829,262 @@ class CEventApp {
         } else {
             this.renderEventList(container);
         }
+    }
+
+    /* =========================================================================
+       STATS BAR — weekly + monthly summary for list/time views
+       ========================================================================= */
+    renderStatsBar(container, events, onFilterClick) {
+        const weekStart = this.selectedDateObj.clone().startOf('week');
+        const weekEnd   = this.selectedDateObj.clone().endOf('week');
+        const monthStart = this.selectedDateObj.clone().startOf('month');
+        const monthEnd   = this.selectedDateObj.clone().endOf('month');
+
+        let weekPending = 0, weekDone = 0, weekClosed = 0;
+        let monthPending = 0, monthDone = 0, monthClosed = 0;
+
+        for (let d = monthStart.clone(); d.isSameOrBefore(monthEnd, 'day'); d.add(1, 'day')) {
+            const ds = d.format('DD-MM-YYYY');
+            const inWeek = d.isSameOrAfter(weekStart, 'day') && d.isSameOrBefore(weekEnd, 'day');
+            (this.plugin.eventsByDate[ds] || []).forEach(ev => {
+                if (ev.status === 'completed') { monthDone++; if (inWeek) weekDone++; }
+                else if (ev.status === 'closed') { monthClosed++; if (inWeek) weekClosed++; }
+                else { monthPending++; if (inWeek) weekPending++; }
+            });
+        }
+
+        const sl = this.plugin.settings.statusLabels || {};
+
+        const mkRow = (rowKey, rowCls, val1, lbl1, val2, lbl2, val3, lbl3) => {
+            const bar = container.createDiv('cevent-stats-bar ' + rowCls);
+            const mk = (val, label, cls, statusKey) => {
+                const chipId = rowKey + '-' + statusKey;
+                const chip = bar.createDiv('cevent-stats-chip ' + cls + (onFilterClick ? ' is-clickable' : ''));
+                chip.innerHTML = `<span class="cevent-stats-num">${val}</span><span class="cevent-stats-lbl">${label}</span>`;
+                if (onFilterClick) {
+                    chip.title = `Show ${label.toLowerCase()}`;
+                    if (this.activeStatChip === chipId) chip.addClass('is-active-filter');
+                    chip.onclick = () => onFilterClick(statusKey, chipId);
+                }
+            };
+            mk(val1, lbl1, 'stat-pending', 'pending');
+            mk(val2, lbl2, 'stat-done', 'completed');
+            mk(val3, lbl3, 'stat-closed', 'closed');
+        };
+
+        mkRow('week', 'cevent-stats-bar-week',
+            weekPending, (sl.pending||'Pending') + ' this week',
+            weekDone,    (sl.completed||'Done') + ' this week',
+            weekClosed,  (sl.closed||'Closed') + ' this week');
+
+        mkRow('month', 'cevent-stats-bar-month',
+            monthPending, (sl.pending||'Pending') + ' this month',
+            monthDone,    (sl.completed||'Done') + ' this month',
+            monthClosed,  (sl.closed||'Closed') + ' this month');
+    }
+
+    /* =========================================================================
+       TIME-OF-DAY GROUPING helpers
+       ========================================================================= */
+    getTimeOfDay(ev) {
+        const t = ev.time ? ev.time.toLowerCase() : '';
+        if (!t || t.includes('fullday') || t.includes('all day')) return 'allday';
+        const parts = t.includes(' to ') ? t.split(' to ') : t.includes('-') ? t.split('-') : [t];
+        const obj = parseTimeObj(parts[0]);
+        if (!obj) return 'allday';
+        return this.getTimeGroupIdForMinutes(obj.hour * 60 + obj.minute);
+    }
+
+    // Resolves which configured time-group a given minute-of-day falls into.
+    // Supports groups that wrap past midnight (e.g. start: 22:00, end: 02:00).
+    getTimeGroupIdForMinutes(mins) {
+        const groups = (this.plugin.settings.timeGroups && this.plugin.settings.timeGroups.length)
+            ? this.plugin.settings.timeGroups : DEFAULT_TIME_GROUPS;
+        for (const g of groups) {
+            const sMins = hhmmToMinutes(g.start);
+            let eMins = hhmmToMinutes(g.end);
+            if (sMins === null || eMins === null) continue;
+            if (eMins <= sMins) eMins += 1440; // wraps past midnight (24:00 also lands here)
+            let m = mins;
+            if (m < sMins) m += 1440;
+            if (m >= sMins && m < eMins) return g.id;
+        }
+        return groups[0] ? groups[0].id : 'morning';
+    }
+
+    getTimeGroupsMeta() {
+        const groups = (this.plugin.settings.timeGroups && this.plugin.settings.timeGroups.length)
+            ? this.plugin.settings.timeGroups : DEFAULT_TIME_GROUPS;
+        return groups.map(g => ({ key: g.id, label: g.name, icon: SVG[iconForTimeGroupName(g.name)] || SVG.clock }));
+    }
+
+    /* =========================================================================
+       WEEK VIEW — 7-column time-slot grid
+       ========================================================================= */
+    renderWeekView(container) {
+        const shape = this.plugin.settings.calendarDayShape || 'circle';
+        this.rootEl.setAttribute('data-day-shape', shape);
+
+        const topSection = container.createDiv('cevent-fixed-header');
+        const header = topSection.createDiv('cevent-calendar-header cevent-flex-between');
+        const dateContainer = header.createDiv('cevent-month-year-container');
+
+        const weekStart = this.weekViewBaseDate.clone().startOf('week');
+        const weekEnd   = weekStart.clone().add(6, 'days');
+
+        const titleEl = dateContainer.createDiv({ cls: 'cevent-header-day-month' });
+        titleEl.setText(`${weekStart.format('D MMM')} – ${weekEnd.format('D MMM YYYY')}`);
+
+        const controls = header.createDiv('cevent-flex-row cevent-calendar-controls');
+        const todayBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'This week' });
+        todayBtn.innerHTML = SVG.calendar;
+        todayBtn.onclick = () => { this.weekViewBaseDate = moment().startOf('week'); this.render(); };
+
+        const prevBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Previous week' });
+        prevBtn.innerHTML = SVG.chevronLeft;
+        prevBtn.onclick = () => { this.weekViewBaseDate.subtract(1, 'week'); this.render(); };
+
+        const nextBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Next week' });
+        nextBtn.innerHTML = SVG.chevronRight;
+        nextBtn.onclick = () => { this.weekViewBaseDate.add(1, 'week'); this.render(); };
+
+        const scrollArea = container.createDiv('cevent-scrollable-body');
+        const wkTable = scrollArea.createDiv('cevent-wk-table');
+
+        // Header row: Time + 7 days
+        const hRow = wkTable.createDiv('cevent-wk-header-row');
+        hRow.createDiv({ cls: 'cevent-wk-time-col cevent-wk-head', text: 'Time' });
+        const todayStr = moment().format('DD-MM-YYYY');
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const day = weekStart.clone().add(i, 'days');
+            days.push(day);
+            const ds = day.format('DD-MM-YYYY');
+            const hCell = hRow.createDiv({ cls: `cevent-wk-day-col cevent-wk-head${ds === todayStr ? ' wk-today' : ''}` });
+            hCell.createDiv({ cls: 'cevent-wk-head-day', text: day.format('ddd').toUpperCase() });
+            hCell.createDiv({ cls: 'cevent-wk-head-num', text: day.format('D') });
+            const evCount = (this.plugin.eventsByDate[ds] || []).length;
+            if (evCount) hCell.createDiv({ cls: 'cevent-wk-head-count', text: String(evCount) });
+        }
+
+        // Build slot maps per day
+        const isHalfHour = this.plugin.settings.timeViewHalfHour;
+        const slotsCount = isHalfHour ? 48 : 24;
+        const dayMaps = days.map(d => {
+            const map = {};
+            for (let i = 0; i < slotsCount; i++) map[i] = [];
+            const ds = d.format('DD-MM-YYYY');
+            const evs = this.plugin.eventsByDate[ds] || [];
+            evs.forEach(ev => {
+                const t = ev.time ? ev.time.toLowerCase() : '';
+                if (!t || t.includes('fullday') || t.includes('all day')) { map[-1] = map[-1] || []; map[-1].push(ev); return; }
+                const parts = t.includes(' to ') ? t.split(' to ') : t.includes('-') ? t.split('-') : null;
+                if (parts) {
+                    const sObj = parseTimeObj(parts[0]);
+                    const eObj = parseTimeObj(parts[1]);
+                    if (sObj && eObj) {
+                        const step = isHalfHour ? 30 : 60;
+                        const sMins = sObj.hour*60+sObj.minute;
+                        let eMins = eObj.hour*60+eObj.minute;
+                        if (eMins < sMins) eMins = sMins + step;
+                        for (let m = sMins; m < eMins; m += step) {
+                            const h = Math.floor(m/60); if (h>=24) continue;
+                            const idx = isHalfHour ? h*2+(m%60>=30?1:0) : h;
+                            if (!map[idx].includes(ev)) { ev.isTimeSpan=true; map[idx].push(ev); }
+                        }
+                        return;
+                    }
+                }
+                const sObj = parseTimeObj(t);
+                if (sObj) {
+                    ev.isTimeSpan = false;
+                    const idx = isHalfHour ? sObj.hour*2+(sObj.minute>=30?1:0) : sObj.hour;
+                    map[idx].push(ev);
+                } else { map[-1] = map[-1]||[]; map[-1].push(ev); }
+            });
+            return map;
+        });
+
+        // All-day row
+        const hasAllDay = dayMaps.some(m => m[-1] && m[-1].length > 0);
+        if (hasAllDay) {
+            const adRow = wkTable.createDiv('cevent-wk-row');
+            adRow.createDiv({ cls: 'cevent-wk-time-col cevent-wk-label', text: 'All Day' });
+            days.forEach((d, i) => {
+                const cell = adRow.createDiv({ cls: 'cevent-wk-day-col' });
+                (dayMaps[i][-1] || []).forEach(ev => this.renderWkCell(cell, ev));
+            });
+        }
+
+        // Hourly rows — week view always renders the full 24-hour grid (12 AM through to
+        // the next 12 AM) regardless of the "Only Event Hours" TimeView setting, so the
+        // table never looks empty/truncated.
+        const nowHour = moment().hour();
+        const nowMinute = moment().minute();
+        const timeFormatPref = this.plugin.settings.timeFormat || 'auto';
+
+        for (let slot = 0; slot < slotsCount; slot++) {
+            const hr = isHalfHour ? Math.floor(slot/2) : slot;
+            const min = isHalfHour ? (slot%2)*30 : 0;
+            const isCurrent = (hr === nowHour && (!isHalfHour || (min === 0 ? nowMinute < 30 : nowMinute >= 30)));
+
+            const row = wkTable.createDiv(`cevent-wk-row${isCurrent ? ' wk-current-row' : ''}`);
+            const label = formatClockLabel(hr, min, timeFormatPref);
+            row.createDiv({ cls: `cevent-wk-time-col cevent-wk-label${isCurrent ? ' highlight' : ''}`, text: label });
+
+            // Conflict detection: collect all slots
+            const slotEvLists = dayMaps.map(m => m[slot]||[]);
+            days.forEach((d, i) => {
+                const ds = d.format('DD-MM-YYYY');
+                const slotEvs = slotEvLists[i];
+                const isToday = ds === todayStr;
+                const cell = row.createDiv({ cls: `cevent-wk-day-col${isToday ? ' wk-today-col' : ''}${isCurrent && isToday ? ' wk-current-slot' : ''}` });
+                const hasConflict = slotEvs.length > 1;
+                slotEvs.slice(0, 2).forEach(ev => {
+                    const chip = this.renderWkCell(cell, ev, hasConflict);
+                });
+                if (slotEvs.length > 2) {
+                    const more = cell.createDiv({ cls: 'cevent-wk-more', text: `+${slotEvs.length-2}` });
+                    more.onclick = () => { this.selectedDateObj = d.clone(); this.currentView = 'list'; this.render(); };
+                }
+            });
+        }
+
+        // Auto-scroll to current row
+        setTimeout(() => {
+            const cur = scrollArea.querySelector('.wk-current-row');
+            if (cur) cur.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 80);
+    }
+
+    renderWkCell(container, ev, hasConflict = false) {
+        let color = this.plugin.settings.statusColors.pending;
+        if (ev.status === 'completed') color = this.plugin.settings.statusColors.completed;
+        else if (ev.status === 'closed') color = this.plugin.settings.statusColors.closed;
+        else if (ev.tags && ev.tags.includes('#important')) color = this.plugin.settings.statusColors.important;
+        if (ev.color) color = ev.color;
+
+        const chip = container.createDiv('cevent-wk-chip');
+        chip.style.setProperty('--event-border-color', color);
+        if (hasConflict) chip.addClass('cevent-wk-conflict');
+        if (ev.isTimeSpan) chip.addClass('cevent-wk-span');
+
+        if (hasConflict) {
+            const icon = chip.createSpan('cevent-wk-conflict-icon');
+            icon.innerHTML = SVG.conflict;
+        }
+
+        const label = chip.createDiv('cevent-wk-chip-label');
+        label.setText(ev.name);
+        chip.title = ev.time ? `${ev.name} (${ev.time})` : ev.name;
+
+        chip.onclick = () => {
+            this.previousView = 'week';
+            this.selectedEvent = ev;
+            this.currentView = 'event';
+            this.render();
+        };
+        return chip;
     }
 
     /* =========================================================================
@@ -717,15 +1177,20 @@ class CEventApp {
         const nowMinute = moment().minute();
         const nowAmpm = moment().format('A');
 
+        // Table view's time labels follow the global Clock Format setting
+        // (Auto / 12-hour / 24-hour), same as the rest of the plugin.
+        const timeFormatPref = this.plugin.settings.timeFormat || 'auto';
+        const is12Hour = use12HourFormat(timeFormatPref);
+
         const table = wrapper.createDiv('cevent-tv-scroll-wrapper');
         const innerTable = table.createDiv('cevent-tv-table');
         const tableAlias = innerTable;
 
         const headerRow = tableAlias.createDiv('cevent-tv-header-row');
         headerRow.createDiv({ text: 'Time', cls: 'cevent-tv-col-time cevent-tv-col-head' });
-        const amHeadEl = headerRow.createDiv({ text: 'AM', cls: 'cevent-tv-col-am cevent-tv-col-head' });
+        const amHeadEl = headerRow.createDiv({ text: is12Hour ? 'AM' : '00–11', cls: 'cevent-tv-col-am cevent-tv-col-head' });
         if (nowAmpm === 'AM') amHeadEl.addClass('highlight');
-        const pmHeadEl = headerRow.createDiv({ text: 'PM', cls: 'cevent-tv-col-pm cevent-tv-col-head' });
+        const pmHeadEl = headerRow.createDiv({ text: is12Hour ? 'PM' : '12–23', cls: 'cevent-tv-col-pm cevent-tv-col-head' });
         if (nowAmpm === 'PM') pmHeadEl.addClass('highlight');
 
         if (allDayEvents.length > 0) {
@@ -733,7 +1198,7 @@ class CEventApp {
             row.createDiv({ text: 'All Day', cls: 'cevent-tv-col-time cevent-tv-label highlight' });
             const amCol = row.createDiv('cevent-tv-col-am');
             const pmCol = row.createDiv('cevent-tv-col-pm');
-            allDayEvents.forEach(ev => this.renderTvCell(amCol, ev));
+            allDayEvents.forEach(ev => this.renderTvCell(amCol, ev, false, false));
         }
 
         const maxPerSlot = parseInt(this.plugin.settings.timeViewMaxPerSlot) || 3;
@@ -745,7 +1210,14 @@ class CEventApp {
 
             const renderTableRow = (is30Min) => {
                 const minuteStr = is30Min ? '30' : '00';
-                const timeLabelText = isHalfHour ? `${label12}:${minuteStr}` : String(label12);
+                const minuteNum = is30Min ? 30 : 0;
+                // 12-hour mode shows one shared numeral (e.g. "5") since AM/PM is
+                // already disambiguated by column. 24-hour mode has no AM/PM split,
+                // so both real clock times are shown using standard "HH:mm" naming.
+                const timeLabelText = is12Hour
+                    ? (isHalfHour ? `${label12}:${minuteStr}` : String(label12))
+                    : `${formatClockLabel(amHour, minuteNum, '24')} / ${formatClockLabel(pmHour, minuteNum, '24')}`;
+
                 
                 const amSlot = isHalfHour ? (amHour * 2 + (is30Min ? 1 : 0)) : amHour;
                 const pmSlot = isHalfHour ? (pmHour * 2 + (is30Min ? 1 : 0)) : pmHour;
@@ -768,7 +1240,7 @@ class CEventApp {
 
                 // AM Col
                 const amCol = row.createDiv(`cevent-tv-col-am${isCurrentAmSlot ? ' current-slot' : ''}`);
-                amEvents.slice(0, maxPerSlot).forEach(ev => this.renderTvCell(amCol, ev, ev.isTimeSpan));
+                amEvents.slice(0, maxPerSlot).forEach(ev => this.renderTvCell(amCol, ev, ev.isTimeSpan, amEvents.length > 1));
                 if (amEvents.length > maxPerSlot) {
                     const more = amCol.createDiv('cevent-tv-more');
                     more.setText(`+${amEvents.length - maxPerSlot} more`);
@@ -777,7 +1249,7 @@ class CEventApp {
 
                 // PM Col
                 const pmCol = row.createDiv(`cevent-tv-col-pm${isCurrentPmSlot ? ' current-slot' : ''}`);
-                pmEvents.slice(0, maxPerSlot).forEach(ev => this.renderTvCell(pmCol, ev, ev.isTimeSpan));
+                pmEvents.slice(0, maxPerSlot).forEach(ev => this.renderTvCell(pmCol, ev, ev.isTimeSpan, pmEvents.length > 1));
                 if (pmEvents.length > maxPerSlot) {
                     const more = pmCol.createDiv('cevent-tv-more');
                     more.setText(`+${pmEvents.length - maxPerSlot} more`);
@@ -800,7 +1272,7 @@ class CEventApp {
         }, 100);
     }
 
-    renderTvCell(container, ev, isSpan = false) {
+    renderTvCell(container, ev, isSpan = false, hasConflict = false) {
         let targetColor = this.plugin.settings.statusColors.pending;
         if (ev.status === 'completed') targetColor = this.plugin.settings.statusColors.completed;
         else if (ev.status === 'closed') targetColor = this.plugin.settings.statusColors.closed;
@@ -812,6 +1284,28 @@ class CEventApp {
         
         cell.style.setProperty('--event-border-color', targetColor);
         cell.title = ev.name;
+        if (hasConflict) {
+            cell.addClass('cevent-tv-cell-conflict');
+            const conflictIcon = cell.createSpan('cevent-tv-conflict-badge');
+            conflictIcon.innerHTML = SVG.conflict;
+            conflictIcon.title = 'Time conflict detected';
+        }
+        // Duration bar: estimate width % if time range event
+        if (isSpan && ev.time) {
+            const t = ev.time.toLowerCase();
+            const parts = t.includes(' to ') ? t.split(' to ') : t.includes('-') ? t.split('-') : null;
+            if (parts) {
+                const sObj = parseTimeObj(parts[0]);
+                const eObj = parseTimeObj(parts[1]);
+                if (sObj && eObj) {
+                    const totalMins = Math.max((eObj.hour*60+eObj.minute) - (sObj.hour*60+sObj.minute), 30);
+                    const pct = Math.min(100, Math.round((totalMins / 60) * 100));
+                    const durBar = cell.createDiv('cevent-tv-dur-bar');
+                    durBar.style.width = `${Math.min(pct, 100)}%`;
+                    durBar.style.background = targetColor;
+                }
+            }
+        }
         cell.onclick = () => {
             this.previousView = this.currentView;
             this.selectedEvent = ev;
@@ -844,20 +1338,35 @@ class CEventApp {
     }
 
     /* =========================================================================
-       VIEW 2b: EVENT LIST
+       VIEW 2b: EVENT LIST with time-of-day grouping
        ========================================================================= */
     async renderEventList(listContainer) {
         listContainer.empty();
-        const wrapperList = listContainer.createDiv('cevent-list-items');
         const events = this.filterAndSortEvents(this.currentBaseEvents);
+
+        const wrapperList = listContainer.createDiv('cevent-list-items');
 
         if (events.length === 0) {
             wrapperList.createDiv({ text: 'No events found for this filter.', cls: 'cevent-empty-state' });
             return;
         }
 
-        for (const ev of events) {
-            await this.createEventCard(wrapperList, ev);
+        // Group by time of day (groups are user-configurable in settings)
+        const groupMeta = [{ key: 'allday', label: 'All Day', icon: SVG.sun }, ...this.getTimeGroupsMeta()];
+        const groups = {};
+        groupMeta.forEach(gm => groups[gm.key] = []);
+        events.forEach(ev => { const g = this.getTimeOfDay(ev); (groups[g] = groups[g] || []).push(ev); });
+
+        for (const gm of groupMeta) {
+            const evs = groups[gm.key] || [];
+            if (evs.length === 0) continue;
+            const groupDiv = wrapperList.createDiv('cevent-tod-group');
+            const gHeader = groupDiv.createDiv('cevent-tod-header');
+            gHeader.innerHTML = `${gm.icon} <span>${gm.label}</span><span class="cevent-tod-count">${evs.length}</span>`;
+            const gBody = groupDiv.createDiv('cevent-tod-body');
+            for (const ev of evs) {
+                await this.createEventCard(gBody, ev);
+            }
         }
     }
 
@@ -881,10 +1390,7 @@ class CEventApp {
             this.currentMonthObj = moment();
             this.selectedDateObj = moment();
             this.renderAllTasksList(listContainer);
-            setTimeout(() => {
-                const todayTarget = listContainer.querySelector('.cevent-today-target');
-                if (todayTarget) todayTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 80);
+            setTimeout(() => this.focusTodayRow(listContainer), 80);
         };
 
         const prevBtn = controls.createEl('button', { cls: 'cevent-nav-icon-btn', title: 'Previous day' });
@@ -954,11 +1460,24 @@ class CEventApp {
         this.renderAllTasksList(listContainer);
 
         searchInput.oninput = (e) => { this.searchQuery = e.target.value; this.renderAllTasksList(listContainer); };
-        tagSelect.onchange = (e) => { this.listFilter = e.target.value; this.renderAllTasksList(listContainer); };
+        tagSelect.onchange = (e) => {
+            this.listFilter = e.target.value;
+            this.activeStatChip = null;
+            this.renderAllTasksList(listContainer);
+        };
     }
 
     async renderAllTasksList(listContainer) {
         listContainer.empty();
+
+        // Stats bar for all tasks
+        const allEvs = this.filterAndSortEvents(this.plugin.eventsArray);
+        this.renderStatsBar(listContainer, allEvs, (statusKey, chipId) => {
+            this.listFilter = statusKey;
+            this.activeStatChip = chipId;
+            this.render();
+        });
+
         const wrapperList = listContainer.createDiv('cevent-list-items');
 
         const sortedDates = Object.keys(this.plugin.eventsByDate).sort((a, b) => {
@@ -973,36 +1492,116 @@ class CEventApp {
         const today = moment().startOf('day');
         let totalDaysRendered = 0;
 
+        // Group dates by month
+        const monthGroups = {}; // key: 'YYYY-MM'
         for (const dateStr of sortedDates) {
             const dayEvents = this.plugin.eventsByDate[dateStr] || [];
             const filteredGroup = this.filterAndSortEvents(dayEvents);
             if (filteredGroup.length === 0) continue;
-            totalDaysRendered++;
-
             const m = moment(dateStr, 'DD-MM-YYYY');
-            const isToday = m.isValid() && m.isSame(today, 'day');
+            const monthKey = m.isValid() ? m.format('YYYY-MM') : 'unknown';
+            if (!monthGroups[monthKey]) monthGroups[monthKey] = [];
+            monthGroups[monthKey].push({ dateStr, filteredGroup, m });
+        }
 
-            const dateHeader = wrapperList.createDiv('cevent-date-segment-header');
-            dateHeader.dataset.date = dateStr;
-            if (isToday) dateHeader.addClass('cevent-today-target');
-            const dateBadge = dateHeader.createDiv('cevent-date-badge');
-            if (isToday) dateBadge.addClass('is-today');
-            dateBadge.setText(isToday ? 'Today' : (m.isValid() ? m.format('ddd,D,MMMM,YYYY') : dateStr));
+        // Determine the default-open accordion(s), once per view instance:
+        // open the current month if it has events; otherwise open the single
+        // nearest month (by distance, ties broken toward the future). The number
+        // of months opened (starting from that pivot, forward) is controlled by
+        // settings.accordionOpenCount ('all' or a positive integer, default 1).
+        if (!this.monthAccordionInitialized) {
+            this.monthAccordionInitialized = true;
+            const monthKeys = Object.keys(monthGroups)
+                .filter(k => k !== 'unknown')
+                .sort((a, b) => a.localeCompare(b));
 
-            const groupContainer = wrapperList.createDiv('cevent-date-group-container');
-            for (const ev of filteredGroup) {
-                await this.createEventCard(groupContainer, ev);
+            if (monthKeys.length > 0) {
+                const setting = this.plugin.settings.accordionOpenCount;
+                const openAll = String(setting).trim().toLowerCase() === 'all';
+
+                if (openAll) {
+                    monthKeys.forEach(k => this.expandedMonths.add(k));
+                } else {
+                    const currentMonthKey = today.format('YYYY-MM');
+                    let pivotIdx = monthKeys.indexOf(currentMonthKey);
+                    if (pivotIdx === -1) {
+                        // No events in the current month — find the nearest month key.
+                        let bestDiff = Infinity;
+                        monthKeys.forEach((k, idx) => {
+                            const km = moment(k + '-01', 'YYYY-MM-DD');
+                            const diff = Math.abs(km.diff(moment(currentMonthKey + '-01', 'YYYY-MM-DD'), 'months'));
+                            if (diff < bestDiff) { bestDiff = diff; pivotIdx = idx; }
+                        });
+                    }
+                    const count = Math.max(1, parseInt(setting, 10) || 1);
+                    for (let i = pivotIdx; i < monthKeys.length && i < pivotIdx + count; i++) {
+                        this.expandedMonths.add(monthKeys[i]);
+                    }
+                }
             }
         }
 
-        if (totalDaysRendered === 0) {
+        for (const [monthKey, dayList] of Object.entries(monthGroups)) {
+            const mLabel = dayList[0].m.isValid() ? dayList[0].m.format('MMMM YYYY') : monthKey;
+            const isExpanded = this.expandedMonths.has(monthKey);
+            const monthTotal = dayList.reduce((s, d) => s + d.filteredGroup.length, 0);
+
+            // Month header (collapsible)
+            const monthHeader = wrapperList.createDiv('cevent-month-group-header');
+            const chevron = monthHeader.createSpan(`cevent-month-chevron${isExpanded ? ' is-expanded' : ''}`);
+            chevron.innerHTML = SVG.chevronRight;
+            monthHeader.createSpan({ cls: 'cevent-month-label', text: mLabel });
+            monthHeader.createSpan({ cls: 'cevent-month-count', text: `${monthTotal} event${monthTotal !== 1 ? 's' : ''}` });
+            monthHeader.onclick = () => {
+                if (this.expandedMonths.has(monthKey)) this.expandedMonths.delete(monthKey);
+                else this.expandedMonths.add(monthKey);
+                this.renderAllTasksList(listContainer);
+            };
+
+            if (!isExpanded) continue;
+
+            const monthBody = wrapperList.createDiv('cevent-month-group-body');
+
+            for (const { dateStr, filteredGroup, m } of dayList) {
+                totalDaysRendered++;
+                const isToday = m.isValid() && m.isSame(today, 'day');
+
+                const dateHeader = monthBody.createDiv('cevent-date-segment-header');
+                dateHeader.dataset.date = dateStr;
+                if (isToday) dateHeader.addClass('cevent-today-target');
+                const dateBadge = dateHeader.createDiv('cevent-date-badge');
+                if (isToday) dateBadge.addClass('is-today');
+                dateBadge.setText(isToday ? 'Today' : (m.isValid() ? m.format('ddd, D MMMM YYYY') : dateStr));
+
+                const groupContainer = monthBody.createDiv('cevent-date-group-container');
+                for (const ev of filteredGroup) {
+                    await this.createEventCard(groupContainer, ev);
+                }
+            }
+        }
+
+        if (totalDaysRendered === 0 && Object.keys(monthGroups).length === 0) {
             wrapperList.createDiv({ text: 'No events found.', cls: 'cevent-empty-state' });
         }
 
-        setTimeout(() => {
-            const todayTarget = listContainer.querySelector('.cevent-today-target');
-            if (todayTarget) todayTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 100);
+        setTimeout(() => this.focusTodayRow(listContainer), 100);
+    }
+
+    // Scrolls the All Tasks list to today's row; if today has no events (so no row
+    // exists), falls back to the closest upcoming date row instead of doing nothing.
+    focusTodayRow(listContainer) {
+        const todayTarget = listContainer.querySelector('.cevent-today-target');
+        if (todayTarget) { todayTarget.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+        const today = moment().startOf('day');
+        const headers = Array.from(listContainer.querySelectorAll('.cevent-date-segment-header[data-date]'));
+        let closest = null, closestDiff = Infinity;
+        headers.forEach(h => {
+            const m = moment(h.dataset.date, 'DD-MM-YYYY');
+            if (!m.isValid()) return;
+            const diff = Math.abs(m.diff(today, 'days'));
+            if (diff < closestDiff) { closestDiff = diff; closest = h; }
+        });
+        if (closest) closest.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     /* =========================================================================
@@ -1047,8 +1646,20 @@ class CEventApp {
         return filtered.sort((a, b) => {
             const timeA = this.parseTimeForSort(a.time);
             const timeB = this.parseTimeForSort(b.time);
-            if (this.sortMode === 'Time: Oldest First') return timeA.localeCompare(timeB);
-            if (this.sortMode === 'Time: Newest First') return timeB.localeCompare(timeA);
+
+            if (this.sortMode === 'Time: Oldest First' || this.sortMode === 'Time: Newest First') {
+                // Status filters mix events from many different dates, so sorting by
+                // time-of-day alone would interleave unrelated days. Sort by full
+                // date+time instead so the list reads chronologically.
+                if (this.isStatusFilterActive()) {
+                    const dateA = moment(a.originalStartDate, 'DD-MM-YYYY');
+                    const dateB = moment(b.originalStartDate, 'DD-MM-YYYY');
+                    const keyA = (dateA.isValid() ? dateA.format('YYYYMMDD') : '99999999') + timeA;
+                    const keyB = (dateB.isValid() ? dateB.format('YYYYMMDD') : '99999999') + timeB;
+                    return this.sortMode === 'Time: Oldest First' ? keyA.localeCompare(keyB) : keyB.localeCompare(keyA);
+                }
+                return this.sortMode === 'Time: Oldest First' ? timeA.localeCompare(timeB) : timeB.localeCompare(timeA);
+            }
             if (this.sortMode === 'Name: A-Z') return a.name.localeCompare(b.name);
             if (this.sortMode === 'Name: Z-A') return b.name.localeCompare(a.name);
             return 0;
@@ -1088,7 +1699,8 @@ class CEventApp {
 
         item.style.setProperty('--event-border-color', targetColor);
 
-        let statusLabel = ev.status.charAt(0).toUpperCase() + ev.status.slice(1);
+        const sl = this.plugin.settings.statusLabels || {};
+        let statusLabel = sl[ev.status] || ev.status.charAt(0).toUpperCase() + ev.status.slice(1);
         if (ev.tags && ev.tags.includes('#important') && ev.status === 'pending') statusLabel = 'Important';
         if (ev.color && ev.status === 'pending' && !ev.tags.includes('#important')) statusLabel = 'Custom';
 
@@ -1272,12 +1884,13 @@ class CEventApp {
         scrollArea.createDiv({ text: 'Status', cls: 'cevent-section-title' });
         const statusActions = scrollArea.createDiv('cevent-actions-grid');
 
+        const sl2 = this.plugin.settings.statusLabels || {};
         const btnOpen = statusActions.createEl('button', { cls: `cevent-action-btn btn-open ${ev.status === 'pending' ? 'is-active' : ''}` });
-        btnOpen.innerHTML = `${SVG.warning} Pending`;
+        btnOpen.innerHTML = `${SVG.warning} ${sl2.pending||'Pending'}`;
         const btnDone = statusActions.createEl('button', { cls: `cevent-action-btn btn-don ${ev.status === 'completed' ? 'is-active' : ''}` });
-        btnDone.innerHTML = `${SVG.check} Done`;
+        btnDone.innerHTML = `${SVG.check} ${sl2.completed||'Done'}`;
         const btnCancel = statusActions.createEl('button', { cls: `cevent-action-btn btn-del ${ev.status === 'closed' ? 'is-active' : ''}` });
-        btnCancel.innerHTML = `${SVG.x} Cancel`;
+        btnCancel.innerHTML = `${SVG.x} ${sl2.closed||'Cancel'}`;
 
         btnOpen.onclick = () => { this.plugin.updateEventStatus(ev, ' '); this.render(); };
         btnDone.onclick = () => { this.plugin.updateEventStatus(ev, 'x'); this.render(); };
@@ -1321,10 +1934,96 @@ class CEventPlannerSettingTab extends PluginSettingTab {
         this.plugin = plugin;
     }
 
+    renderTimeGroupsList(containerEl) {
+        if (!Array.isArray(this.plugin.settings.timeGroups) || this.plugin.settings.timeGroups.length === 0) {
+            this.plugin.settings.timeGroups = DEFAULT_TIME_GROUPS.map(g => ({ ...g }));
+        }
+        // Duration labels use the same global standard time-duration naming as the
+        // rest of the plugin: 12-hour "h:mm A" or 24-hour "HH:mm", resolved from the
+        // Clock Format setting (Auto mirrors the device's own 12/24-hour preference).
+        const timeFormatPref = this.plugin.settings.timeFormat || 'auto';
+        const formatGroupTime = (hhmm) => {
+            if (!hhmm) return '--:--';
+            const parts = String(hhmm).split(':');
+            let h = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            if (isNaN(h) || isNaN(m)) return hhmm;
+            if (h >= 24) h = 0; // "24:00" represents end-of-day, displayed as midnight
+            return formatClockLabel(h, m, timeFormatPref);
+        };
+
+        const listEl = containerEl.createDiv('cevent-settings-timegroup-list');
+        this.plugin.settings.timeGroups.forEach((group, idx) => {
+            const row = listEl.createDiv('cevent-settings-timegroup-row');
+
+            const nameInput = row.createEl('input', { type: 'text', cls: 'cevent-tg-name-input' });
+            nameInput.value = group.name;
+            nameInput.placeholder = 'Group name (e.g. Morning)';
+            nameInput.onchange = async (e) => {
+                group.name = e.target.value || group.name;
+                await this.plugin.saveSettings();
+                this.plugin.refreshAllActiveViews();
+            };
+
+            const durationLabel = row.createSpan({ cls: 'cevent-tg-duration-label' });
+            const refreshDurationLabel = () => {
+                durationLabel.setText(`${formatGroupTime(group.start)} – ${formatGroupTime(group.end)}`);
+            };
+            refreshDurationLabel();
+
+            const startLabel = row.createSpan({ cls: 'cevent-tg-label', text: 'Start' });
+            const startInput = row.createEl('input', { type: 'time', cls: 'cevent-tg-time-input' });
+            startInput.value = group.start;
+            startInput.onchange = async (e) => {
+                group.start = e.target.value || group.start;
+                refreshDurationLabel();
+                await this.plugin.saveSettings();
+                this.plugin.refreshAllActiveViews();
+            };
+
+            const endLabel = row.createSpan({ cls: 'cevent-tg-label', text: 'End' });
+            const endInput = row.createEl('input', { type: 'time', cls: 'cevent-tg-time-input' });
+            // "24:00" is not a valid <input type="time"> value — show it as 00:00 (end of day) in the picker
+            // while still saving/using "24:00" semantics is unnecessary; store as 23:59 equivalent on edit.
+            endInput.value = group.end === '24:00' ? '00:00' : group.end;
+            endInput.onchange = async (e) => {
+                group.end = e.target.value || group.end;
+                refreshDurationLabel();
+                await this.plugin.saveSettings();
+                this.plugin.refreshAllActiveViews();
+            };
+
+            const delBtn = row.createEl('button', { cls: 'cevent-tg-delete-btn', title: 'Remove group' });
+            delBtn.innerHTML = SVG.x;
+            delBtn.onclick = async () => {
+                this.plugin.settings.timeGroups.splice(idx, 1);
+                await this.plugin.saveSettings();
+                this.display();
+            };
+        });
+    }
+
     display() {
         const { containerEl } = this;
         containerEl.empty();
         containerEl.createEl('h2', { text: 'CEvent-Planner Settings' });
+
+        new Setting(containerEl)
+            .setName('Calendar Day Shape')
+            .setDesc('Shape of the date background in the calendar view.')
+            .addDropdown(drop => drop
+                .addOption('circle', 'Circle')
+                .addOption('square', 'Square')
+                .addOption('transparent', 'Transparent (no background)')
+                .setValue(this.plugin.settings.calendarDayShape || 'circle')
+                .onChange(async (value) => {
+                    this.plugin.settings.calendarDayShape = value;
+                    await this.plugin.saveSettings();
+                    // Apply immediately to all active views
+                    this.plugin.activeAppInstances.forEach(app => {
+                        app.rootEl && app.rootEl.setAttribute('data-day-shape', value);
+                    });
+                }));
 
         new Setting(containerEl)
             .setName('Default View')
@@ -1348,6 +2047,54 @@ class CEventPlannerSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        containerEl.createEl('h3', { text: 'Time Grouping' });
+
+        new Setting(containerEl)
+            .setName('Clock Format')
+            .setDesc('How real-world times are displayed (Week View, group headers, etc). "Auto" matches your device\'s format.')
+            .addDropdown(drop => drop
+                .addOption('auto', 'Auto (match device)')
+                .addOption('12', '12-hour (AM/PM)')
+                .addOption('24', '24-hour')
+                .setValue(this.plugin.settings.timeFormat || 'auto')
+                .onChange(async (value) => {
+                    this.plugin.settings.timeFormat = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshAllActiveViews();
+                    // Re-render so Time Group duration labels (and anything else
+                    // showing formatted times in this panel) pick up the new format.
+                    this.display();
+                }));
+
+        containerEl.createEl('p', {
+            cls: 'setting-item-description',
+            text: 'Define the named time-of-day groups used to bucket events in Schedule view (e.g. Morning, Noon, Evening). Each group needs a start and end time — pick them with your device\'s native time picker.'
+        });
+
+        this.renderTimeGroupsList(containerEl);
+
+        new Setting(containerEl)
+            .addButton(btn => btn
+                .setButtonText('+ Add Time Group')
+                .onClick(async () => {
+                    if (!Array.isArray(this.plugin.settings.timeGroups)) this.plugin.settings.timeGroups = [];
+                    this.plugin.settings.timeGroups.push({
+                        id: 'group_' + Date.now(),
+                        name: 'New Group',
+                        start: '09:00',
+                        end: '10:00'
+                    });
+                    await this.plugin.saveSettings();
+                    this.display();
+                }))
+            .addButton(btn => btn
+                .setButtonText('Reset to Defaults')
+                .onClick(async () => {
+                    this.plugin.settings.timeGroups = DEFAULT_TIME_GROUPS.map(g => ({ ...g }));
+                    await this.plugin.saveSettings();
+                    this.display();
+                }));
+
         new Setting(containerEl)
             .setName('Block Height')
             .setDesc('CSS height for the code block dashboard (e.g. 800px).')
@@ -1365,6 +2112,38 @@ class CEventPlannerSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     const parsed = parseInt(value);
                     if (!isNaN(parsed) && parsed > 0) { this.plugin.settings.maxDots = parsed; await this.plugin.saveSettings(); }
+                }));
+
+        new Setting(containerEl)
+            .setName('Event Card Corner Radius')
+            .setDesc('Border radius (in px) for event cards. Set to 0 for square corners (cards use elevation/shadow instead).')
+            .addText(text => text
+                .setPlaceholder('0')
+                .setValue(String(this.plugin.settings.cardBorderRadius ?? 0))
+                .onChange(async (value) => {
+                    const parsed = parseInt(value, 10);
+                    this.plugin.settings.cardBorderRadius = isNaN(parsed) ? 0 : Math.max(0, parsed);
+                    await this.plugin.saveSettings();
+                    this.plugin.refreshAllActiveViews();
+                }));
+
+        new Setting(containerEl)
+            .setName('All Tasks: Default Open Month Accordions')
+            .setDesc('How many month accordions are expanded by default in the All Tasks view, starting from the current month (or the nearest month with events). Type "all" to expand every month. Default: 1.')
+            .addText(text => text
+                .setPlaceholder('1')
+                .setValue(String(this.plugin.settings.accordionOpenCount ?? '1'))
+                .onChange(async (value) => {
+                    const trimmed = (value || '1').trim();
+                    if (trimmed.toLowerCase() === 'all') {
+                        this.plugin.settings.accordionOpenCount = 'all';
+                    } else {
+                        const parsed = parseInt(trimmed, 10);
+                        this.plugin.settings.accordionOpenCount = String(isNaN(parsed) ? 1 : Math.max(1, parsed));
+                    }
+                    await this.plugin.saveSettings();
+                    // This only affects the *initial* accordion state of newly opened
+                    // views, so we don't force-refresh already-open All Tasks views.
                 }));
 
         new Setting(containerEl)
@@ -1417,6 +2196,55 @@ class CEventPlannerSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.enableAlarmVibration !== false)
                 .onChange(async (value) => {
                     this.plugin.settings.enableAlarmVibration = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        containerEl.createEl('h3', { text: 'Snooze' });
+
+        new Setting(containerEl)
+            .setName('Default Snooze Duration')
+            .setDesc('Middle snooze button duration (minutes). Buttons always include 5 min and 30 min.')
+            .addDropdown(drop => {
+                [5,10,15,20,30].forEach(v => drop.addOption(String(v), `${v} minutes`));
+                drop.setValue(String(this.plugin.settings.snoozeMinutes || 10));
+                drop.onChange(async (value) => { this.plugin.settings.snoozeMinutes = parseInt(value); await this.plugin.saveSettings(); });
+            });
+
+        containerEl.createEl('h3', { text: 'Custom Status Labels' });
+
+        new Setting(containerEl)
+            .setName('Pending Label')
+            .setDesc('Custom label for "Pending" status.')
+            .addText(text => text
+                .setPlaceholder('Pending')
+                .setValue((this.plugin.settings.statusLabels||{}).pending || 'Pending')
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.statusLabels) this.plugin.settings.statusLabels = {};
+                    this.plugin.settings.statusLabels.pending = value || 'Pending';
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Completed Label')
+            .setDesc('Custom label for "Completed" status.')
+            .addText(text => text
+                .setPlaceholder('Completed')
+                .setValue((this.plugin.settings.statusLabels||{}).completed || 'Completed')
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.statusLabels) this.plugin.settings.statusLabels = {};
+                    this.plugin.settings.statusLabels.completed = value || 'Completed';
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Closed Label')
+            .setDesc('Custom label for "Closed" status.')
+            .addText(text => text
+                .setPlaceholder('Closed')
+                .setValue((this.plugin.settings.statusLabels||{}).closed || 'Closed')
+                .onChange(async (value) => {
+                    if (!this.plugin.settings.statusLabels) this.plugin.settings.statusLabels = {};
+                    this.plugin.settings.statusLabels.closed = value || 'Closed';
                     await this.plugin.saveSettings();
                 }));
     }
@@ -1839,16 +2667,16 @@ class CEventPlannerPlugin extends Plugin {
             .cevent-tab-btn.active { color: var(--interactive-accent); border-bottom-color: var(--interactive-accent); }
             .cevent-tab-btn svg { pointer-events: none; }
 
-            .cevent-tab-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+            .cevent-tab-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 
             /* ===================== DASHBOARD WRAPPER ===================== */
             .cevent-dashboard-wrapper {
                 display: flex; flex-direction: column;
-                height: 100%; overflow: hidden; padding: 16px; min-height: 100%;
+                height: 100%; overflow: hidden; padding: 12px 16px 8px 16px; min-height: 0;
             }
-            .cevent-fixed-header { flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; padding-bottom: 10px; }
-            .cevent-scrollable-body { flex-grow: 1; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; }
-            .cevent-dynamic-body { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-top: 6px; padding-right: 6px; padding-bottom: 24px; }
+            .cevent-fixed-header { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; }
+            .cevent-scrollable-body { flex-grow: 1; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; min-height: 0; }
+            .cevent-dynamic-body { flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-top: 6px; padding-right: 6px; padding-bottom: 24px; min-height: 0; }
             .cevent-list-items { display: flex; flex-direction: column; gap: 14px; width: 100%; }
 
             .cevent-dynamic-body::-webkit-scrollbar,
@@ -1870,7 +2698,7 @@ class CEventPlannerPlugin extends Plugin {
             .cevent-header-year:hover { color: var(--interactive-accent); }
             .cevent-year-picker { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
 
-            .cevent-calendar-header { margin-bottom: 4px; }
+            .cevent-calendar-header { margin-bottom: 2px; }
             .cevent-calendar-controls { gap: 4px; }
 
             .cevent-nav-icon-btn {
@@ -1978,28 +2806,57 @@ class CEventPlannerPlugin extends Plugin {
             /* ===================== CALENDAR GRID ===================== */
             .cevent-grid {
                 display: grid; grid-template-columns: repeat(7, 1fr);
-                gap: 6px; margin-top: 8px; padding-bottom: 16px;
+                gap: 4px; margin-top: 4px; padding-bottom: 8px;
             }
             .cevent-day-header {
                 text-align: center; font-size: 0.72em; font-weight: 700;
-                color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;
+                color: var(--text-muted); text-transform: uppercase; margin-bottom: 0;
+                padding: 4px 0;
             }
             .cevent-day-wrapper {
                 display: flex; flex-direction: column; align-items: center;
-                gap: 3px; border-radius: 12px; padding-bottom: 4px; transition: background 0.2s;
+                gap: 2px; border-radius: 10px; padding-bottom: 3px; transition: background 0.2s;
             }
             .cevent-day-wrapper.drag-over {
                 background: rgba(var(--interactive-accent-rgb), 0.15);
                 box-shadow: inset 0 0 0 2px var(--interactive-accent);
             }
-            .cevent-week-number { font-size: 0.55em; color: var(--text-faint); height: 10px; }
+            .cevent-week-number { font-size: 0.55em; color: var(--text-faint); height: 8px; line-height: 8px; }
             .cevent-day {
-                width: 34px; height: 34px; display: flex; justify-content: center;
-                align-items: center; border-radius: 50%; font-size: 0.9em;
+                width: 32px; height: 32px; display: flex; justify-content: center;
+                align-items: center; font-size: 0.88em;
                 cursor: pointer; background: var(--background-secondary);
                 border: 1px solid transparent; transition: all 0.2s;
+                /* Shape is controlled by data-day-shape on the root */
+                border-radius: 50%;
             }
-            .cevent-day:hover { border-color: var(--interactive-accent); transform: scale(1.1); }
+
+            /* --- Shape variants via data attribute on root --- */
+            [data-day-shape="circle"]      .cevent-day { border-radius: 50%; }
+            [data-day-shape="square"]      .cevent-day { border-radius: 6px; }
+            [data-day-shape="transparent"] .cevent-day {
+                border-radius: 6px;
+                background: transparent !important;
+                border-color: transparent !important;
+                box-shadow: none !important;
+            }
+            [data-day-shape="transparent"] .cevent-day.is-today {
+                background: transparent !important;
+                color: var(--interactive-accent);
+                text-decoration: underline;
+                font-weight: bold;
+            }
+            [data-day-shape="transparent"] .cevent-day.selected {
+                background: rgba(var(--interactive-accent-rgb), 0.15) !important;
+                color: var(--interactive-accent);
+                font-weight: bold;
+                box-shadow: none !important;
+            }
+
+            .cevent-day:hover { border-color: var(--interactive-accent); transform: scale(1.08); }
+            [data-day-shape="transparent"] .cevent-day:hover {
+                background: rgba(var(--interactive-accent-rgb), 0.08) !important;
+            }
             .cevent-day.faint { color: var(--text-faint); opacity: 0.5; }
             .cevent-day.is-today {
                 font-weight: bold; background: rgba(var(--interactive-accent-rgb), 0.1);
@@ -2011,8 +2868,8 @@ class CEventPlannerPlugin extends Plugin {
             }
 
             .cevent-dot-container {
-                display: flex; gap: 3px; height: 12px;
-                align-items: center; justify-content: center; width: 100%; margin-top: 2px;
+                display: flex; gap: 3px; height: 10px;
+                align-items: center; justify-content: center; width: 100%; margin-top: 1px;
             }
             .cevent-event-dot {
                 width: 7px; height: 7px; border-radius: 50%;
@@ -2145,12 +3002,14 @@ class CEventPlannerPlugin extends Plugin {
             /* ===================== EVENT CARDS ===================== */
             .cevent-item {
                 background: color-mix(in srgb, var(--event-border-color) 10%, var(--background-secondary));
-                border-radius: 14px; padding: 14px;
+                border-radius: var(--cevent-card-radius, 0px); padding: 14px;
                 position: relative;
                 border-left: 5px solid var(--event-border-color);
                 cursor: pointer; transition: transform 0.2s ease, box-shadow 0.2s ease;
+                /* Card elevation (Material-style) instead of relying on rounded corners */
+                box-shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.10);
             }
-            .cevent-item:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+            .cevent-item:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,0.14), 0 2px 6px rgba(0,0,0,0.10); }
             .cevent-item.status-completed { opacity: 0.85; }
             .cevent-item.status-closed { opacity: 0.65; filter: grayscale(50%); }
 
@@ -2249,6 +3108,213 @@ class CEventPlannerPlugin extends Plugin {
                 cursor: pointer; transform: scale(1.1); margin-right: 8px;
                 accent-color: var(--interactive-accent);
             }
+
+            /* ===================== TOOLTIP (DOT HOVER) ===================== */
+            .cevent-dot-tooltip {
+                display: none;
+                position: fixed;
+                z-index: 9999;
+                background: var(--background-primary);
+                border: 1px solid var(--interactive-accent);
+                border-radius: 10px;
+                padding: 8px 12px;
+                font-size: 0.78em;
+                color: var(--text-normal);
+                box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+                max-width: 220px;
+                pointer-events: none;
+                white-space: normal;
+                line-height: 1.4;
+            }
+            .cevent-dot-tooltip strong { color: var(--interactive-accent); display: block; margin-bottom: 2px; }
+            .cevent-dot-tooltip span { color: var(--text-muted); }
+            .cevent-dot-tooltip em { color: var(--text-faint); font-style: italic; font-size: 0.9em; }
+
+            /* ===================== STATS BAR ===================== */
+            .cevent-stats-bar {
+                display: flex; gap: 8px; flex-wrap: wrap;
+                margin-bottom: 8px;
+            }
+            .cevent-stats-bar-month { margin-top: -2px; opacity: 0.92; }
+            .cevent-stats-chip {
+                display: flex; align-items: center; gap: 6px;
+                padding: 5px 12px; border-radius: 28px;
+                font-size: 0.78em; font-weight: 600;
+                border: 1px solid var(--background-modifier-border);
+                background: var(--background-secondary);
+            }
+            .cevent-stats-chip.stat-pending { border-color: var(--interactive-accent); color: var(--interactive-accent); }
+            .cevent-stats-chip.stat-done    { border-color: var(--text-success, #588157); color: var(--text-success, #588157); }
+            .cevent-stats-chip.stat-closed  { border-color: var(--text-muted); color: var(--text-muted); }
+            .cevent-stats-chip.is-clickable { cursor: pointer; transition: transform 0.12s ease, filter 0.12s ease; }
+            .cevent-stats-chip.is-clickable:hover { filter: brightness(1.12); transform: translateY(-1px); }
+            .cevent-stats-chip.is-clickable:active { transform: translateY(0); }
+            .cevent-stats-chip.is-active-filter { background: var(--interactive-accent); color: white !important; border-color: var(--interactive-accent); }
+            .cevent-stats-num { font-size: 1.1em; font-weight: 800; }
+            .cevent-stats-lbl { font-size: 0.85em; opacity: 0.85; }
+
+            /* ===================== TIME-OF-DAY GROUPS ===================== */
+            .cevent-tod-group { margin-bottom: 12px; }
+            .cevent-tod-header {
+                display: flex; align-items: center; gap: 6px;
+                font-size: 0.75em; font-weight: 700; text-transform: uppercase;
+                letter-spacing: 0.8px; color: var(--text-muted);
+                padding: 4px 2px; margin-bottom: 6px;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+            .cevent-tod-header svg { width: 12px; height: 12px; flex-shrink: 0; }
+            .cevent-tod-count {
+                margin-left: auto;
+                background: var(--background-modifier-border);
+                border-radius: 28px; padding: 1px 7px;
+                font-size: 0.9em; color: var(--text-muted);
+            }
+            .cevent-tod-body { display: flex; flex-direction: column; gap: 10px; }
+
+            /* ===================== MONTH COLLAPSE (ALL TASKS) ===================== */
+            .cevent-month-group-header {
+                display: flex; align-items: center; gap: 8px;
+                padding: 8px 12px; margin-top: 8px;
+                background: var(--background-secondary);
+                border: 1px solid var(--background-modifier-border);
+                border-radius: 10px; cursor: pointer;
+                transition: background 0.15s;
+                font-weight: 700; font-size: 0.9em; color: var(--text-normal);
+            }
+            .cevent-month-group-header:hover { background: var(--background-modifier-hover); }
+            .cevent-month-chevron { color: var(--text-muted); display: flex; align-items: center; transition: transform 0.25s ease; transform: rotate(0deg); }
+            .cevent-month-chevron.is-expanded { transform: rotate(90deg); }
+            .cevent-month-chevron svg { width: 14px; height: 14px; }
+            .cevent-month-label { flex: 1; }
+            .cevent-month-count {
+                font-size: 0.78em; color: var(--text-muted);
+                background: var(--background-modifier-border);
+                padding: 2px 8px; border-radius: 28px;
+            }
+            .cevent-month-group-body { margin-left: 4px; }
+
+            /* ===================== SETTINGS: TIME GROUPS EDITOR ===================== */
+            .cevent-settings-timegroup-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; }
+            .cevent-settings-timegroup-row {
+                display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                padding: 8px 10px; border: 1px solid var(--background-modifier-border);
+                border-radius: 8px; background: var(--background-secondary);
+            }
+            .cevent-tg-name-input {
+                flex: 1; min-width: 120px; padding: 4px 8px;
+                border: 1px solid var(--background-modifier-border); border-radius: 6px;
+                background: var(--background-primary); color: var(--text-normal);
+            }
+            .cevent-tg-label { font-size: 0.78em; color: var(--text-muted); }
+            .cevent-tg-duration-label { font-size: 0.78em; color: var(--text-faint); white-space: nowrap; margin: 0 4px; }
+            .cevent-tg-time-input {
+                padding: 3px 6px; border: 1px solid var(--background-modifier-border);
+                border-radius: 6px; background: var(--background-primary); color: var(--text-normal);
+            }
+            .cevent-tg-delete-btn {
+                margin-left: auto; display: flex; align-items: center; justify-content: center;
+                width: 26px; height: 26px; border-radius: 6px; border: none;
+                background: transparent; color: var(--text-muted); cursor: pointer;
+            }
+            .cevent-tg-delete-btn:hover { background: var(--background-modifier-error, rgba(231,76,60,0.15)); color: #e74c3c; }
+            .cevent-tg-delete-btn svg { width: 14px; height: 14px; }
+
+            /* ===================== WEEK VIEW ===================== */
+            .cevent-wk-table {
+                display: flex; flex-direction: column;
+                border: 1.5px solid color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
+                border-radius: 14px; overflow: hidden;
+                background: var(--background-primary);
+                min-width: 520px;
+            }
+            .cevent-wk-header-row,
+            .cevent-wk-row {
+                display: grid;
+                grid-template-columns: 64px repeat(7, minmax(0, 1fr));
+            }
+            .cevent-wk-header-row {
+                background: var(--background-secondary);
+                border-bottom: 2px solid color-mix(in srgb, var(--interactive-accent) 35%, var(--background-modifier-border));
+                position: sticky; top: 0; z-index: 2;
+            }
+            .cevent-wk-row {
+                border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 15%, var(--background-modifier-border));
+                min-height: 36px;
+            }
+            .cevent-wk-row:last-child { border-bottom: none; }
+            .cevent-wk-row.wk-current-row { background: rgba(var(--interactive-accent-rgb), 0.04); }
+            .cevent-wk-head {
+                padding: 8px 4px; text-align: center;
+                font-size: 0.75em; font-weight: 700;
+                color: var(--text-muted); text-transform: uppercase;
+            }
+            .cevent-wk-head.wk-today { color: var(--interactive-accent); }
+            .cevent-wk-head-day { font-size: 0.85em; font-weight: 800; }
+            .cevent-wk-head-num { font-size: 1.1em; font-weight: 700; margin-top: 2px; }
+            .cevent-wk-head-count {
+                font-size: 0.7em; background: var(--interactive-accent);
+                color: white; border-radius: 28px; padding: 1px 5px;
+                margin: 2px auto 0; display: inline-block;
+            }
+            .cevent-wk-time-col {
+                padding: 6px 6px 6px 2px; text-align: right;
+                background: var(--background-secondary);
+                border-right: 1px solid var(--background-modifier-border);
+            }
+            .cevent-wk-label {
+                font-size: 0.72em; font-weight: 600; color: var(--text-muted); white-space: nowrap;
+            }
+            .cevent-wk-label.highlight { color: var(--interactive-accent); font-weight: 700; }
+            .cevent-wk-day-col {
+                padding: 3px; display: flex; flex-direction: column; gap: 2px;
+                border-right: 1px solid var(--background-modifier-border);
+            }
+            .cevent-wk-day-col:last-child { border-right: none; }
+            .cevent-wk-day-col.wk-today-col { background: rgba(var(--interactive-accent-rgb), 0.04); }
+            .cevent-wk-day-col.wk-current-slot { background: rgba(255,152,0,0.08); }
+            .cevent-wk-chip {
+                font-size: 0.68em; font-weight: 600;
+                padding: 2px 4px; border-radius: 5px; cursor: pointer;
+                background: color-mix(in srgb, var(--event-border-color, var(--interactive-accent)) 15%, var(--background-secondary));
+                border-left: 3px solid var(--event-border-color, var(--interactive-accent));
+                color: var(--text-normal);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+                transition: filter 0.15s;
+            }
+            .cevent-wk-chip:hover { filter: brightness(1.08); }
+            .cevent-wk-chip.cevent-wk-conflict {
+                border: 1.5px solid #e74c3c;
+                border-left: 3px solid #e74c3c;
+                background: rgba(231,76,60,0.1);
+            }
+            .cevent-wk-chip.cevent-wk-span {
+                background: color-mix(in srgb, var(--event-border-color) 22%, var(--background-secondary));
+                font-style: italic;
+            }
+            .cevent-wk-conflict-icon { display: inline-flex; align-items: center; margin-right: 3px; color: #e74c3c; }
+            .cevent-wk-conflict-icon svg { width: 10px; height: 10px; }
+            .cevent-wk-chip-label { overflow: hidden; text-overflow: ellipsis; }
+            .cevent-wk-more {
+                font-size: 0.65em; color: var(--interactive-accent); cursor: pointer;
+                font-weight: 700; padding: 1px 2px;
+            }
+            .cevent-wk-more:hover { text-decoration: underline; }
+
+            /* ===================== TIME-VIEW: CONFLICT + DURATION BAR ===================== */
+            .cevent-tv-cell-conflict {
+                border-left-color: #e74c3c !important;
+                background: color-mix(in srgb, #e74c3c 12%, var(--background-secondary)) !important;
+            }
+            .cevent-tv-conflict-badge {
+                display: inline-flex; align-items: center;
+                color: #e74c3c; flex-shrink: 0;
+            }
+            .cevent-tv-conflict-badge svg { width: 11px; height: 11px; }
+            .cevent-tv-dur-bar {
+                height: 3px; border-radius: 2px; margin-top: 3px;
+                min-width: 8px; opacity: 0.55; flex-shrink: 0;
+                align-self: flex-end; order: 99;
+            }
 /* Ensure the table's container has a defined height and scrolling enabled */
 
 /* Ensure the table's container handles the scrolling context */
@@ -2297,3 +3363,4 @@ class CEventPlannerPlugin extends Plugin {
 }
 
 module.exports = CEventPlannerPlugin;
+/* nosourcemap */
