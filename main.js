@@ -379,6 +379,13 @@ class CEventApp {
         // the "Pending this week/month" chips, since those are a different control.
         this.activeStatChip = null;
 
+        // Per-block event filter set by the code block processor from the
+        // `tags:` / `anyTags:` / `pages:` / `recommendedOnly:` options. null = show every event.
+        this.eventFilter = null;
+        this._filteredSource = null;
+        this._filteredArray = [];
+        this._filteredByDate = {};
+
         this.currentBaseEvents = [];
         this.weekViewBaseDate = moment().startOf('week');
         // Tracks which month-accordions are expanded in the All Tasks view. Starts
@@ -386,6 +393,57 @@ class CEventApp {
         // (per settings.accordionOpenCount) instead of opening every month.
         this.expandedMonths = new Set();
         this.monthAccordionInitialized = false;
+    }
+
+    /* =========================================================================
+       PER-BLOCK EVENT FILTER
+       Views read `this.eventsArray` / `this.eventsByDate` instead of the plugin's
+       global indices, so each code block can show a subset of the vault.
+       ========================================================================= */
+    matchesEventFilter(ev) {
+        const f = this.eventFilter;
+        if (!f) return true;
+
+        if (f.tags.length > 0 || f.anyTags.length > 0 || f.recommendedOnly) {
+            const evTags = new Set((ev.tags || '').split(/\s+/)
+                .map(t => t.replace(/^#/, '').toLowerCase()).filter(Boolean));
+            if (f.tags.length > 0 && !f.tags.every(t => evTags.has(t))) return false;
+            if (f.anyTags.length > 0 && !f.anyTags.some(t => evTags.has(t))) return false;
+            if (f.recommendedOnly && !evTags.has('recommended')) return false;
+        }
+
+        if (f.pages.length > 0) {
+            const path = (ev.file && ev.file.path ? ev.file.path : '').toLowerCase();
+            const pathNoExt = path.replace(/\.md$/, '');
+            const hit = f.pages.some(p => p.endsWith('/') ? path.startsWith(p) : pathNoExt === p);
+            if (!hit) return false;
+        }
+        return true;
+    }
+
+    get eventsArray() {
+        if (!this.eventFilter) return this.plugin.eventsArray;
+        this.rebuildFilteredIndices();
+        return this._filteredArray;
+    }
+
+    get eventsByDate() {
+        if (!this.eventFilter) return this.plugin.eventsByDate;
+        this.rebuildFilteredIndices();
+        return this._filteredByDate;
+    }
+
+    // The plugin assigns fresh index objects on every rebuild, so the identity of
+    // plugin.eventsArray is a cheap cache key: recompute only when it changes.
+    rebuildFilteredIndices() {
+        if (this._filteredSource === this.plugin.eventsArray) return;
+        this._filteredSource = this.plugin.eventsArray;
+        this._filteredArray = this.plugin.eventsArray.filter(ev => this.matchesEventFilter(ev));
+        this._filteredByDate = {};
+        for (const [dateStr, evs] of Object.entries(this.plugin.eventsByDate)) {
+            const kept = evs.filter(ev => this.matchesEventFilter(ev));
+            if (kept.length > 0) this._filteredByDate[dateStr] = kept;
+        }
     }
 
     mount() {
@@ -525,7 +583,7 @@ class CEventApp {
         while (currentDay.isBefore(endDate) || currentDay.isSame(endDate, 'day')) {
             const isCurrentMonth = currentDay.month() === this.currentMonthObj.month();
             const dateStr = currentDay.format('DD-MM-YYYY');
-            const eventsForDay = this.plugin.eventsByDate[dateStr] || [];
+            const eventsForDay = this.eventsByDate[dateStr] || [];
 
             const dayWrapper = grid.createDiv('cevent-day-wrapper');
             dayWrapper.dataset.date = dateStr;
@@ -618,7 +676,7 @@ class CEventApp {
         dayWrapper.removeClass('drag-over');
         const eventId = e.dataTransfer.getData('text/plain');
         if (!eventId) return;
-        const ev = this.plugin.eventsArray.find(event => event.id === eventId);
+        const ev = this.eventsArray.find(event => event.id === eventId);
         if (!ev) return;
         if (ev.originalStartDate === targetDateStr) return;
         await this.plugin.updateEventDate(ev, targetDateStr);
@@ -638,7 +696,7 @@ class CEventApp {
 
     getBaseEvents() {
         if (this.timeScope === 'Upcoming') {
-            return this.plugin.eventsArray.filter(e => {
+            return this.eventsArray.filter(e => {
                 const eventDate = moment(e.originalStartDate, 'DD-MM-YYYY');
                 return eventDate.isValid() && eventDate.isAfter(moment(), 'day');
             });
@@ -647,7 +705,7 @@ class CEventApp {
         if (this.timeScope === 'This Week') {
             const weekStart = this.selectedDateObj.clone().startOf('week');
             const weekEnd = this.selectedDateObj.clone().endOf('week');
-            return this.plugin.eventsArray.filter(e => {
+            return this.eventsArray.filter(e => {
                 const eventDate = moment(e.originalStartDate, 'DD-MM-YYYY');
                 return eventDate.isValid() && eventDate.isSameOrAfter(weekStart, 'day') && eventDate.isSameOrBefore(weekEnd, 'day');
             });
@@ -660,8 +718,8 @@ class CEventApp {
         const dateStr = targetDate.format('DD-MM-YYYY');
         const prevDateStr = targetDate.clone().subtract(1, 'days').format('DD-MM-YYYY');
         
-        let events = this.plugin.eventsByDate[dateStr] || [];
-        let prevEvents = this.plugin.eventsByDate[prevDateStr] || [];
+        let events = this.eventsByDate[dateStr] || [];
+        let prevEvents = this.eventsByDate[prevDateStr] || [];
         
         // Bring in events from the previous day that wrap past midnight into our current selected day
         let crossoverEvents = prevEvents.filter(ev => {
@@ -719,7 +777,7 @@ class CEventApp {
             dayCol.createDiv({ text: scrollDayObj.format('D'), cls: 'day-num' });
 
             const dateStr = scrollDayObj.format('DD-MM-YYYY');
-            const eventsForDay = this.plugin.eventsByDate[dateStr] || [];
+            const eventsForDay = this.eventsByDate[dateStr] || [];
             if (eventsForDay.length > 0) {
                 const dotContainer = dayCol.createDiv('cevent-dot-container');
                 dotContainer.style.marginTop = '4px';
@@ -846,7 +904,7 @@ class CEventApp {
         for (let d = monthStart.clone(); d.isSameOrBefore(monthEnd, 'day'); d.add(1, 'day')) {
             const ds = d.format('DD-MM-YYYY');
             const inWeek = d.isSameOrAfter(weekStart, 'day') && d.isSameOrBefore(weekEnd, 'day');
-            (this.plugin.eventsByDate[ds] || []).forEach(ev => {
+            (this.eventsByDate[ds] || []).forEach(ev => {
                 if (ev.status === 'completed') { monthDone++; if (inWeek) weekDone++; }
                 else if (ev.status === 'closed') { monthClosed++; if (inWeek) weekClosed++; }
                 else { monthPending++; if (inWeek) weekPending++; }
@@ -963,7 +1021,7 @@ class CEventApp {
             const hCell = hRow.createDiv({ cls: `cevent-wk-day-col cevent-wk-head${ds === todayStr ? ' wk-today' : ''}` });
             hCell.createDiv({ cls: 'cevent-wk-head-day', text: day.format('ddd').toUpperCase() });
             hCell.createDiv({ cls: 'cevent-wk-head-num', text: day.format('D') });
-            const evCount = (this.plugin.eventsByDate[ds] || []).length;
+            const evCount = (this.eventsByDate[ds] || []).length;
             if (evCount) hCell.createDiv({ cls: 'cevent-wk-head-count', text: String(evCount) });
         }
 
@@ -974,7 +1032,7 @@ class CEventApp {
             const map = {};
             for (let i = 0; i < slotsCount; i++) map[i] = [];
             const ds = d.format('DD-MM-YYYY');
-            const evs = this.plugin.eventsByDate[ds] || [];
+            const evs = this.eventsByDate[ds] || [];
             evs.forEach(ev => {
                 const t = ev.time ? ev.time.toLowerCase() : '';
                 if (!t || t.includes('fullday') || t.includes('all day')) { map[-1] = map[-1] || []; map[-1].push(ev); return; }
@@ -1439,7 +1497,7 @@ class CEventApp {
         ['All', 'Pending', 'Completed', 'Closed'].forEach(opt => tagSelect.createEl('option', { value: opt.toLowerCase(), text: opt }));
 
         const availableTags = new Set();
-        this.plugin.eventsArray.forEach(ev => {
+        this.eventsArray.forEach(ev => {
             if (ev.tags) ev.tags.split(/\s+/).forEach(t => { if (t.startsWith('#')) availableTags.add(t); });
         });
 
@@ -1471,7 +1529,7 @@ class CEventApp {
         listContainer.empty();
 
         // Stats bar for all tasks
-        const allEvs = this.filterAndSortEvents(this.plugin.eventsArray);
+        const allEvs = this.filterAndSortEvents(this.eventsArray);
         this.renderStatsBar(listContainer, allEvs, (statusKey, chipId) => {
             this.listFilter = statusKey;
             this.activeStatChip = chipId;
@@ -1480,7 +1538,7 @@ class CEventApp {
 
         const wrapperList = listContainer.createDiv('cevent-list-items');
 
-        const sortedDates = Object.keys(this.plugin.eventsByDate).sort((a, b) => {
+        const sortedDates = Object.keys(this.eventsByDate).sort((a, b) => {
             const mA = moment(a, 'DD-MM-YYYY');
             const mB = moment(b, 'DD-MM-YYYY');
             if (mA.isValid() && mB.isValid()) return mA.diff(mB);
@@ -1495,7 +1553,7 @@ class CEventApp {
         // Group dates by month
         const monthGroups = {}; // key: 'YYYY-MM'
         for (const dateStr of sortedDates) {
-            const dayEvents = this.plugin.eventsByDate[dateStr] || [];
+            const dayEvents = this.eventsByDate[dateStr] || [];
             const filteredGroup = this.filterAndSortEvents(dayEvents);
             if (filteredGroup.length === 0) continue;
             const m = moment(dateStr, 'DD-MM-YYYY');
@@ -2277,6 +2335,8 @@ class CEventPlannerPlugin extends Plugin {
             if (s.includes("view: 'calendar'") || s.includes('view: "calendar"')) blockApp.currentView = 'calendar';
             if (s.includes("view: 'alltasks'") || s.includes('view: "alltasks"')) blockApp.currentView = 'allTasks';
 
+            blockApp.eventFilter = this.buildEventFilter(this.parseBlockOptions(source));
+
             blockApp.mount();
             this.activeAppInstances.push(blockApp);
             const renderChild = new MarkdownRenderChild(el);
@@ -2340,6 +2400,50 @@ class CEventPlannerPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    /* =========================================================================
+       CODE BLOCK OPTIONS
+       Parses `key: value` lines. Values may be a quoted scalar or a bracketed,
+       comma-separated list; list items may be quoted. Keys are case-insensitive.
+       ========================================================================= */
+    parseBlockOptions(source) {
+        const opts = {};
+        const unquote = v => v.trim().replace(/^['"]|['"]$/g, '').trim();
+        source.split(/\r?\n/).forEach(line => {
+            const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$/);
+            if (!m) return;
+            const key = m[1].toLowerCase();
+            const raw = m[2];
+            if (/^\[.*\]$/.test(raw)) {
+                opts[key] = raw.slice(1, -1).split(',').map(unquote).filter(Boolean);
+            } else {
+                opts[key] = unquote(raw);
+            }
+        });
+        return opts;
+    }
+
+    // Returns { tags, anyTags, pages, recommendedOnly } or null when no filter option is set.
+    //   tags:            match if the event carries EVERY listed tag (case-insensitive, '#' optional)
+    //   anyTags:         match if the event carries ANY listed tag
+    //   pages:           match if the event's file is ANY listed path ('.md' optional) or under a 'folder/' prefix
+    //   recommendedOnly: additionally require the '#recommended' tag
+    // All options are combined with AND, so each one only ever narrows the result.
+    buildEventFilter(opts) {
+        const asList = v => (Array.isArray(v) ? v : (v ? [v] : []));
+        const normTags = v => asList(v).map(t => t.replace(/^#/, '').toLowerCase()).filter(Boolean);
+        const tags = normTags(opts.tags);
+        const anyTags = normTags(opts.anytags);
+        const pages = asList(opts.pages).map(p => {
+            let s = p.replace(/^\/+/, '').toLowerCase();
+            if (!s.endsWith('/')) s = s.replace(/\.md$/, '');
+            return s;
+        }).filter(Boolean);
+        const recommendedOnly = String(opts.recommendedonly).toLowerCase() === 'true';
+
+        if (tags.length === 0 && anyTags.length === 0 && pages.length === 0 && !recommendedOnly) return null;
+        return { tags, anyTags, pages, recommendedOnly };
     }
 
     get eventBlockRegex() {

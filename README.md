@@ -128,6 +128,36 @@ view: 'alltasks'
 
 The dashboard height is controlled via Settings (default: `800px`).
 
+#### Filtering a dashboard (one calendar per category)
+
+By default every block shows every event in the vault. Three optional options narrow a block down, so a single note can hold several dashboards side by side — for example one calendar per category:
+
+````markdown
+```cevent-planner
+view: 'calendar'
+tags: ['#theatre']
+```
+
+```cevent-planner
+view: 'calendar'
+tags: ['#classical']
+```
+
+```cevent-planner
+view: 'calendar'
+tags: ['#exhibition']
+```
+````
+
+| Option | Example | Matches an event when… |
+|---|---|---|
+| `tags` | `tags: ['#theatre', '#westend']` | its `Tag` line contains **every** listed tag. Case-insensitive; the leading `#` is optional. |
+| `anyTags` | `anyTags: ['#exhibition', '#photography']` | its `Tag` line contains **any** listed tag. |
+| `pages` | `pages: ['Events/Theatre.md', 'Projects/']` | its source file is **any** listed path (vault-relative, `.md` optional), or sits under a folder prefix ending in `/`. |
+| `recommendedOnly` | `recommendedOnly: true` | it carries the `#recommended` tag. Shorthand for `tags: ['#recommended']` that can be combined with the other options. |
+
+All options combine with AND, so each one only narrows the result: `tags: ['#theatre']` with `anyTags: ['#westend', '#fringe']` shows theatre events that are also West End or fringe. Options apply to whichever view the block renders (Calendar, List, All Tasks). A block with no options behaves exactly as before. Reminders and alarms remain vault-wide and are not affected by block filters.
+
 ---
 
 ### Event Attributes Reference
